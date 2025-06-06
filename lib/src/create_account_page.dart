@@ -3,6 +3,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'signin_page.dart';
 import 'zones_page.dart'; // Assuming this is your main app page after login
+import 'package:flutter/foundation.dart'; // for kIsWeb
+
 
 class CreateAccountPage extends StatefulWidget {
   const CreateAccountPage({Key? key}) : super(key: key);
@@ -80,7 +82,13 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
       _errorText = null;
     });
     try {
-      await _supabase.auth.signInWithOAuth(OAuthProvider.google);
+      await _supabase.auth.signInWithOAuth(
+        OAuthProvider.google,
+        // redirectTo: 'com.boulder_radar.app://login-callback/'
+        redirectTo: kIsWeb
+            ? 'http://localhost:3000/auth/callback'
+            : 'com.boulder_radar.app://login-callback',
+      );
     } on AuthException catch (error) {
       setState(() {
         _errorText = error.message;

@@ -1,13 +1,12 @@
 import 'dart:io';
-import 'dart:ui' as ui; // For ui.Image and ImageShader
+import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart'; // For kIsWeb
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:flutter/foundation.dart';
 
-// Represents a single continuous line drawn by the user
+// Represents a single continuous line drawn by the user. Unchanged.
 class DrawnLine {
   final List<Offset> path;
   final Color color;
@@ -27,11 +26,14 @@ class DrawingPage extends StatefulWidget {
 }
 
 class _DrawingPageState extends State<DrawingPage> {
+  // The state now only needs to hold the lines and the decoded image.
   final List<DrawnLine> _lines = <DrawnLine>[];
-  List<Offset> _currentPath = [];
+  DrawnLine? _currentLine;
+  ui.Image? _backgroundImage;
+
+  // Drawing tool settings
   Color _selectedColor = Colors.redAccent;
-  double _strokeWidth = 4.0;
-  ui.Image? _backgroundImage; // To hold the decoded image for CustomPainter
+  double _strokeWidth = 5.0; // Slightly thicker default
 
   @override
   void initState() {
@@ -39,6 +41,7 @@ class _DrawingPageState extends State<DrawingPage> {
     _loadImage();
   }
 
+  /// Decodes the image file into a format that the CustomPainter can use.
   Future<void> _loadImage() async {
     try {
       final bytes = await widget.imageXFile.readAsBytes();
@@ -61,30 +64,40 @@ class _DrawingPageState extends State<DrawingPage> {
     }
   }
 
+  // --- Core Drawing Logic ---
+  // The coordinate conversion logic is no longer needed here, simplifying everything.
+
   void _startLine(DragStartDetails details) {
-    if (_backgroundImage == null) return; // Don't draw if image not loaded
+    // `details.localPosition` now directly gives us coordinates on the image.
+    final Offset point = details.localPosition;
     setState(() {
-      _currentPath = [details.localPosition];
+      _currentLine = DrawnLine(
+        path: [point],
+        color: _selectedColor,
+        strokeWidth: _strokeWidth,
+      );
     });
   }
 
   void _updateLine(DragUpdateDetails details) {
-    if (_backgroundImage == null) return;
+    if (_currentLine == null) return;
+    final Offset point = details.localPosition;
     setState(() {
-      _currentPath.add(details.localPosition);
+      _currentLine!.path.add(point);
     });
   }
 
   void _endLine(DragEndDetails details) {
-    if (_backgroundImage == null || _currentPath.isEmpty) return;
-    setState(() {
-      _lines.add(DrawnLine(
-          path: List.from(_currentPath),
-          color: _selectedColor,
-          strokeWidth: _strokeWidth));
-      _currentPath = []; // Reset for next line
-    });
+    if (_currentLine != null && _currentLine!.path.isNotEmpty) {
+      // Add the finished line to the list of all lines and clear the current one.
+      setState(() {
+        _lines.add(_currentLine!);
+        _currentLine = null;
+      });
+    }
   }
+
+  // --- Toolbar Actions ---
 
   void _undoLastLine() {
     if (_lines.isNotEmpty) {
@@ -97,38 +110,38 @@ class _DrawingPageState extends State<DrawingPage> {
   void _clearAllLines() {
     setState(() {
       _lines.clear();
+      _currentLine = null;
     });
   }
 
-  // In a real app, you'd capture the drawing as an image or save line data
+  /// Renders the background image and all drawn lines onto a new canvas
+  /// and returns the result to the previous page.
   Future<void> _saveAndReturnDrawing() async {
     if (_backgroundImage == null) {
       Navigator.of(context).pop();
       return;
     }
 
-    // 1. Create a PictureRecorder & Canvas matching the background image size
+    // 1. Create a recorder and a canvas with the image's exact dimensions.
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(
       recorder,
-      Rect.fromLTWH(
-        0,
-        0,
-        _backgroundImage!.width.toDouble(),
-        _backgroundImage!.height.toDouble(),
-      ),
+      Rect.fromLTWH(0, 0, _backgroundImage!.width.toDouble(),
+          _backgroundImage!.height.toDouble()),
     );
 
-    // 2. Draw the background image onto the canvas
+    // 2. Draw the original image.
     canvas.drawImage(_backgroundImage!, Offset.zero, Paint());
 
-    // 3. Draw each line on top
-    final paint = Paint()
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
+    // 3. Draw all the lines on top. The line coordinates are already
+    //    in the correct image-space, so no conversion is needed.
     for (final line in _lines) {
-      paint.color = line.color;
-      paint.strokeWidth = line.strokeWidth;
+      final paint = Paint()
+        ..color = line.color
+        ..strokeWidth = line.strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke;
+
       final path = Path();
       if (line.path.isNotEmpty) {
         path.moveTo(line.path.first.dx, line.path.first.dy);
@@ -139,50 +152,50 @@ class _DrawingPageState extends State<DrawingPage> {
       }
     }
 
-    // 4. End recording and convert to ui.Image
-    final picture = recorder.endRecording();
-    final ui.Image finalImage = await picture.toImage(
-      _backgroundImage!.width,
-      _backgroundImage!.height,
-    );
+    // 4. Convert the canvas to a final image.
+    final ui.Image finalImage = await recorder.endRecording().toImage(
+          _backgroundImage!.width,
+          _backgroundImage!.height,
+        );
 
-    // 5. Convert ui.Image to PNG bytes
+    // 5. Convert the image to PNG bytes.
     final byteData =
         await finalImage.toByteData(format: ui.ImageByteFormat.png);
-    final Uint8List pngBytes = byteData!.buffer.asUint8List();
+    if (byteData == null) return;
+    final Uint8List pngBytes = byteData.buffer.asUint8List();
 
-    // 6. Save bytes to a temporary file
+    // 6. Prepare the result map to pop from the navigator.
+    final Map<String, dynamic> result = {
+      'updatedImageBytes': pngBytes,
+      'has_drawings': _lines.isNotEmpty,
+      'drawing_data': null, // Placeholder for future use
+    };
+
+    // 7. Pop with the correct data for web or native.
+    if (!mounted) return;
     if (kIsWeb) {
-      Navigator.of(context).pop({
-        'updatedImageBytes': pngBytes,
-        'updatedImagePath': null,
-        'has_drawings': _lines.isNotEmpty,
-      });
+      Navigator.of(context).pop(result..addAll({'updatedImagePath': null}));
     } else {
       final tempDir = await getTemporaryDirectory();
       final tempPath =
           '${tempDir.path}/drawn_${DateTime.now().millisecondsSinceEpoch}.png';
-      final tempFile = File(tempPath);
-      await tempFile.writeAsBytes(pngBytes);
-      Navigator.of(context).pop({
-        'updatedImageBytes': pngBytes,
-        'updatedImagePath': tempPath,
-        'has_drawings': _lines.isNotEmpty,
-      });
+      await File(tempPath).writeAsBytes(pngBytes);
+      Navigator.of(context).pop(result..addAll({'updatedImagePath': tempPath}));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black87,
+      backgroundColor: Colors.grey.shade900,
       appBar: AppBar(
         title: const Text("Draw Line on Boulder"),
-        backgroundColor: Colors.grey.shade900,
+        backgroundColor: Colors.grey.shade800,
+        foregroundColor: Colors.white,
         elevation: 1,
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(), // Just cancel
+          onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
           IconButton(
@@ -193,7 +206,8 @@ class _DrawingPageState extends State<DrawingPage> {
           IconButton(
             tooltip: "Clear all lines",
             icon: const Icon(Icons.delete_sweep_outlined),
-            onPressed: _lines.isEmpty ? null : _clearAllLines,
+            onPressed:
+                _lines.isEmpty && _currentLine == null ? null : _clearAllLines,
           ),
           TextButton(
             onPressed: _saveAndReturnDrawing,
@@ -207,163 +221,166 @@ class _DrawingPageState extends State<DrawingPage> {
       ),
       body: Column(
         children: [
+          // The main drawing area
           Expanded(
-            child: _backgroundImage == null
-                ? const Center(child: CircularProgressIndicator())
-                : InteractiveViewer(
-                    panEnabled: true,
-                    minScale: 0.1, // Allow zooming out more
-                    maxScale: 5.0, // Allow zooming in more
-                    child: Center(
-                      child: AspectRatio(
-                        aspectRatio:
-                            _backgroundImage!.width / _backgroundImage!.height,
-                        child: Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            // Display the original image as background for the CustomPaint
-                            Positioned.fill(
-                              child: RawImage(image: _backgroundImage),
+            child: Container(
+              color: Colors.black, // Background for the InteractiveViewer
+              child: _backgroundImage == null
+                  ? const Center(
+                      child: CircularProgressIndicator(color: Colors.white))
+                  : InteractiveViewer(
+                      // Set constraints to false to allow the child to be its natural size.
+                      constrained: false,
+                      // Set boundary margins to allow panning around the entire image.
+                      boundaryMargin: const EdgeInsets.all(20.0),
+                      minScale: 0.1,
+                      maxScale: 4.0,
+                      // The child is now a SizedBox with the exact dimensions of the image.
+                      child: SizedBox(
+                        width: _backgroundImage!.width.toDouble(),
+                        height: _backgroundImage!.height.toDouble(),
+                        // The GestureDetector captures raw pointer events in the image's own coordinate space.
+                        child: GestureDetector(
+                          onPanStart: _startLine,
+                          onPanUpdate: _updateLine,
+                          onPanEnd: _endLine,
+                          // The CustomPaint widget does the actual drawing.
+                          child: CustomPaint(
+                            painter: DrawingPainter(
+                              backgroundImage: _backgroundImage!,
+                              lines: _lines,
+                              currentLine: _currentLine,
                             ),
-                            // CustomPaint widget for drawing lines on top
-                            Positioned.fill(
-                              child: CustomPaint(
-                                painter: LinePainter(
-                                    lines: _lines,
-                                    currentPath: _currentPath,
-                                    selectedColor: _selectedColor,
-                                    selectedStrokeWidth: _strokeWidth),
-                              ),
-                            ),
-                            // GestureDetector to capture drawing input
-                            Positioned.fill(
-                              child: GestureDetector(
-                                onPanStart: _startLine,
-                                onPanUpdate: _updateLine,
-                                onPanEnd: _endLine,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
                     ),
-                  ),
-          ),
-          // Simple Toolbar
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
-            color: Colors.grey.shade900,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                // Color pickers (simplified)
-                _buildColorButton(Colors.redAccent),
-                _buildColorButton(Colors.yellowAccent),
-                _buildColorButton(Colors.blueAccent),
-                _buildColorButton(Colors.greenAccent),
-                _buildColorButton(Colors.white),
-                // Stroke width adjustment (simplified)
-                PopupMenuButton<double>(
-                  icon: Icon(Icons.line_weight, color: Colors.white70),
-                  tooltip: "Stroke Width",
-                  onSelected: (double width) {
-                    setState(() {
-                      _strokeWidth = width;
-                    });
-                  },
-                  itemBuilder: (BuildContext context) =>
-                      <PopupMenuEntry<double>>[
-                    const PopupMenuItem<double>(
-                        value: 2.0, child: Text('Thin')),
-                    const PopupMenuItem<double>(
-                        value: 4.0, child: Text('Medium')),
-                    const PopupMenuItem<double>(
-                        value: 8.0, child: Text('Thick')),
-                  ],
-                ),
-              ],
             ),
-          )
+          ),
+          // The toolbar at the bottom
+          _buildToolbar(),
         ],
       ),
     );
   }
 
+  /// Builds the bottom toolbar for selecting colors and stroke widths.
+  Widget _buildToolbar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 8.0),
+      color: Colors.grey.shade800,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _buildColorButton(Colors.redAccent[400]!),
+          _buildColorButton(Colors.yellowAccent[400]!),
+          _buildColorButton(Colors.blueAccent[400]!),
+          _buildColorButton(Colors.greenAccent[400]!),
+          _buildColorButton(Colors.white),
+          const VerticalDivider(width: 24, color: Colors.transparent),
+          PopupMenuButton<double>(
+            tooltip: "Stroke Width",
+            onSelected: (double width) => setState(() => _strokeWidth = width),
+            itemBuilder: (context) => <PopupMenuEntry<double>>[
+              const PopupMenuItem<double>(value: 3.0, child: Text('Thin')),
+              const PopupMenuItem<double>(value: 5.0, child: Text('Medium')),
+              const PopupMenuItem<double>(value: 8.0, child: Text('Thick')),
+              const PopupMenuItem<double>(value: 12.0, child: Text('Extra Thick')),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade700),
+                  borderRadius: BorderRadius.circular(8)),
+              child: Row(children: [
+                const Icon(Icons.line_weight, color: Colors.white),
+                const SizedBox(width: 8),
+                Text("${_strokeWidth.toInt()}px",
+                    style: const TextStyle(color: Colors.white))
+              ]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Builds a single circular color selection button.
   Widget _buildColorButton(Color color) {
     bool isSelected = _selectedColor == color;
     return GestureDetector(
       onTap: () => setState(() => _selectedColor = color),
       child: Container(
-        width: 36,
-        height: 36,
-        margin: const EdgeInsets.symmetric(horizontal: 4),
+        width: 38,
+        height: 38,
         decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-            border:
-                isSelected ? Border.all(color: Colors.white, width: 3) : null,
-            boxShadow: [
-              BoxShadow(
-                  color: Colors.black26, blurRadius: 2, offset: Offset(0, 1))
-            ]),
+          color: color,
+          shape: BoxShape.circle,
+          border: isSelected
+              ? Border.all(color: Colors.tealAccent, width: 3)
+              : Border.all(color: Colors.white30, width: 1.5),
+          boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
+        ),
       ),
     );
   }
 }
 
-// CustomPainter to draw the lines
-class LinePainter extends CustomPainter {
+/// The CustomPainter responsible for drawing the image and lines.
+/// This is now much simpler as it doesn't need to handle any transformations.
+class DrawingPainter extends CustomPainter {
+  final ui.Image backgroundImage;
   final List<DrawnLine> lines;
-  final List<Offset> currentPath; // The line currently being drawn
-  final Color selectedColor;
-  final double selectedStrokeWidth;
+  final DrawnLine? currentLine;
 
-  LinePainter(
-      {required this.lines,
-      required this.currentPath,
-      required this.selectedColor,
-      required this.selectedStrokeWidth});
+  DrawingPainter(
+      {required this.backgroundImage,
+      required this.lines,
+      this.currentLine});
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw completed lines
+    // 1. Draw the background image at the top-left corner. It will fill
+    //    the canvas since the canvas size is identical to the image size.
+    canvas.drawImage(backgroundImage, Offset.zero, Paint());
+
+    // 2. Draw all the previously completed lines.
     for (final line in lines) {
       final paint = Paint()
         ..color = line.color
-        ..strokeCap = StrokeCap.round
         ..strokeWidth = line.strokeWidth
+        ..strokeCap = StrokeCap.round
         ..style = PaintingStyle.stroke;
+
+      final path = Path();
       if (line.path.isNotEmpty) {
-        Path path = Path();
         path.moveTo(line.path.first.dx, line.path.first.dy);
-        for (int i = 1; i < line.path.length; i++) {
-          path.lineTo(line.path[i].dx, line.path[i].dy);
+        for (final point in line.path.skip(1)) {
+          path.lineTo(point.dx, point.dy);
         }
         canvas.drawPath(path, paint);
       }
     }
 
-    // Draw the current path being actively drawn
-    if (currentPath.isNotEmpty) {
-      final currentPaint = Paint()
-        ..color = selectedColor
+    // 3. Draw the line that is currently being drawn in real-time.
+    if (currentLine != null && currentLine!.path.isNotEmpty) {
+      final paint = Paint()
+        ..color = currentLine!.color
+        ..strokeWidth = currentLine!.strokeWidth
         ..strokeCap = StrokeCap.round
-        ..strokeWidth = selectedStrokeWidth
         ..style = PaintingStyle.stroke;
-      Path path = Path();
-      path.moveTo(currentPath.first.dx, currentPath.first.dy);
-      for (int i = 1; i < currentPath.length; i++) {
-        path.lineTo(currentPath[i].dx, currentPath[i].dy);
+      final path = Path();
+      path.moveTo(currentLine!.path.first.dx, currentLine!.path.first.dy);
+      for (final point in currentLine!.path.skip(1)) {
+        path.lineTo(point.dx, point.dy);
       }
-      canvas.drawPath(path, currentPaint);
+      canvas.drawPath(path, paint);
     }
   }
 
   @override
-  bool shouldRepaint(covariant LinePainter oldDelegate) {
-    return oldDelegate.lines != lines ||
-        oldDelegate.currentPath != currentPath ||
-        oldDelegate.selectedColor != selectedColor ||
-        oldDelegate.selectedStrokeWidth != selectedStrokeWidth;
+  bool shouldRepaint(covariant DrawingPainter oldDelegate) {
+    // Repaint whenever the lines or the current line being drawn changes.
+    return oldDelegate.lines != lines || oldDelegate.currentLine != currentLine;
   }
 }

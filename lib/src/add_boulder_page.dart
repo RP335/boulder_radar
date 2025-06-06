@@ -88,6 +88,104 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     '9A'
   ];
 
+  final List<String> _vScaleGrades = [
+    'V0',
+    'V1',
+    'V2',
+    'V3',
+    'V4',
+    'V5',
+    'V6',
+    'V7',
+    'V8',
+    'V9',
+    'V10',
+    'V11',
+    'V12',
+    'V13',
+    'V14',
+    'V15',
+    'V16'
+  ];
+
+  final List<String> _fontScaleGrades = [
+    '6A',
+    '6A+',
+    '6B',
+    '6B+',
+    '6C',
+    '6C+',
+    '7A',
+    '7A+',
+    '7B',
+    '7B+',
+    '7C',
+    '7C+',
+    '8A',
+    '8A+',
+    '8B',
+    '8B+',
+    '8C',
+    '8C+',
+    '9A'
+  ];
+
+  List<DropdownMenuItem<String>> _buildGradeDropdownItems() {
+    final List<DropdownMenuItem<String>> items = [];
+
+    // Hueco / V-Scale Header
+    items.add(
+      DropdownMenuItem(
+        enabled: false, // Make it unselectable
+        child: Text(
+          "Hueco Scale (USA)",
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.deepPurpleAccent[100],
+          ),
+        ),
+      ),
+    );
+
+    // V-Scale items
+    items.addAll(_vScaleGrades.map(
+      (grade) => DropdownMenuItem<String>(
+        value: grade,
+        child: Text(grade, style: const TextStyle(color: Colors.white)),
+      ),
+    ));
+
+    // Divider
+    items.add(const DropdownMenuItem(
+      enabled: false,
+      child: Divider(color: Colors.white30),
+    ));
+
+    // Font Scale Header
+    items.add(
+      DropdownMenuItem(
+        enabled: false,
+        child: Text(
+          "Fontainebleau Scale (Font)",
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.deepPurpleAccent[100],
+          ),
+        ),
+      ),
+    );
+
+    // Font Scale items
+    items.addAll(_fontScaleGrades.map(
+      (grade) => DropdownMenuItem<String>(
+        value: grade,
+        child: Text(grade, style: const TextStyle(color: Colors.white)),
+      ),
+    ));
+
+    return items;
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -171,6 +269,75 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
           backgroundColor: hasDrawings ? Colors.blueAccent : Colors.orange,
         ),
       );
+    }
+  }
+
+  Future<void> _handleGpsSelection() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = true; // Show loading indicator while fetching
+    });
+
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        throw Exception(
+            'Location permission not granted. Please enable it in your device settings.');
+      }
+
+      final Position pos = await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.high)
+          .timeout(const Duration(seconds: 10)); // 10 second timeout
+
+      // SUCCESS!
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _locationInputType = LocationInputType.gps; // Confirm GPS selection
+          // Optionally pre-fill the manual fields for user reference
+          _manualLatController.text = pos.latitude.toStringAsFixed(6);
+          _manualLngController.text = pos.longitude.toStringAsFixed(6);
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('GPS Location Acquired!'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      // FAILURE
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _locationInputType =
+              LocationInputType.manual; // <<-- REVERT to manual
+        });
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: Colors.grey.shade800,
+            title: const Text('Location Error',
+                style: TextStyle(color: Colors.white)),
+            content: Text(
+              'Could not get your current location. Please check your GPS signal and permissions, or enter the coordinates manually.\n\nError: ${e.toString().replaceFirst("Exception: ", "")}',
+              style: const TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+      }
     }
   }
 
@@ -474,6 +641,7 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
         title: Text('Add Boulder in ${widget.zoneName}'),
         centerTitle: true,
         backgroundColor: Colors.grey.shade800,
+        foregroundColor: Colors.white,
         elevation: 1,
       ),
       body: SingleChildScrollView(
@@ -648,20 +816,20 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
 
               DropdownButtonFormField<String>(
                 value: _selectedGrade,
-                items: _gradeOptions
-                    .map((String grade) => DropdownMenuItem<String>(
-                        value: grade,
-                        child: Text(grade,
-                            style: const TextStyle(color: Colors.white))))
-                    .toList(),
-                onChanged: (String? newValue) =>
-                    setState(() => _selectedGrade = newValue),
+                items:
+                    _buildGradeDropdownItems(), // <-- USE THE NEW METHOD HERE
+                onChanged: (String? newValue) {
+                  if (newValue != null) {
+                    setState(() => _selectedGrade = newValue);
+                  }
+                },
                 decoration: _inputDecoration('Select Grade*', isOptional: false)
                     .copyWith(
                   contentPadding:
                       const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
                 ),
-                dropdownColor: Colors.grey.shade700,
+                dropdownColor:
+                    Colors.grey.shade800, // A bit darker for better contrast
                 icon: const Icon(Icons.keyboard_arrow_down_rounded,
                     color: Colors.white70),
                 style: const TextStyle(color: Colors.white, fontSize: 16),
@@ -694,7 +862,14 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                 ],
                 selected: <LocationInputType>{_locationInputType},
                 onSelectionChanged: (Set<LocationInputType> newSelection) {
-                  setState(() => _locationInputType = newSelection.first);
+                  final selection = newSelection.first;
+                  if (selection == LocationInputType.gps) {
+                    _handleGpsSelection(); // <-- Call our new method
+                  } else {
+                    setState(() {
+                      _locationInputType = LocationInputType.manual;
+                    });
+                  }
                 },
               ),
               const SizedBox(height: 16),

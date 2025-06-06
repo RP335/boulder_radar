@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'create_account_page.dart';
 import 'zones_page.dart';
+import 'package:flutter/foundation.dart'; // for kIsWeb
 
 class SignInPage extends StatefulWidget {
   const SignInPage({Key? key}) : super(key: key);
@@ -57,7 +58,10 @@ class _SignInPageState extends State<SignInPage> {
       // THIS IS THE LINE TO FIX THE REDIRECT ISSUE (see part 2 below)
       await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: 'com.boulder_radar.app://login-callback/', 
+        // redirectTo: 'com.boulder_radar.app://login-callback/', 
+        redirectTo: kIsWeb 
+        ? 'http://localhost:3000/auth/callback'
+        : 'com.boulder_radar.app://login-callback',
       );
     } on AuthException catch (error) {
       setState(() { _errorText = error.message; });
