@@ -149,7 +149,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/signin-assets/Android/png@3x/neutral/
-  # - assets/images/
+    - assets/images/
   # - assets/videos/
   # - assets/audios/
   # - assets/rive_animations/

@@ -6,7 +6,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'src/create_account_page.dart'; // Assuming your pages are here now
 import 'src/zones_page.dart';
 
+const _supabaseUrl = '';
 
+const _supabaseKey = '';
 
 
 Future<void> main() async {
@@ -19,6 +21,9 @@ Future<void> main() async {
 
   runApp(const MyApp());
 }
+
+final ValueNotifier<Session?> _authNotifier = ValueNotifier<Session?>(null);
+ValueNotifier<Session?> get authNotifier => _authNotifier;
 
 class MyApp extends StatelessWidget {
   const MyApp({Key? key}) : super(key: key);
@@ -33,51 +38,82 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const AuthStateListener(), // Use the new StatefulWidget
+      home: const AuthHandler(),
     );
   }
 }
 
-/// This widget listens for auth changes and displays the correct page.
-class AuthStateListener extends StatefulWidget {
-  const AuthStateListener({Key? key}) : super(key: key);
+class AuthHandler extends StatefulWidget {
+  const AuthHandler({Key? key}) : super(key: key);
 
   @override
-  State<AuthStateListener> createState() => _AuthStateListenerState();
+  State<AuthHandler> createState() => _AuthHandlerState();
 }
 
-class _AuthStateListenerState extends State<AuthStateListener> {
-  late final StreamSubscription<AuthState> _authSubscription;
+class _AuthHandlerState extends State<AuthHandler> {
+  late StreamSubscription<AuthState> _authSubscription;
+  bool _isInitialized = false;
+  Session? _lastSession; // Add this to track the last session
 
   @override
   void initState() {
     super.initState();
-    // Listen to the auth state stream
-    _authSubscription =
-        Supabase.instance.client.auth.onAuthStateChange.listen((data) {
-      // We don't need to do anything with the data, just trigger a rebuild.
-      // The `build` method will then check `currentSession` and show the correct page.
-      setState(() {});
+    _initializeAuth();
+  }
+
+  void _initializeAuth() {
+    final supabase = Supabase.instance.client;
+    
+    // Set initial session
+    _lastSession = supabase.auth.currentSession;
+    _authNotifier.value = _lastSession;
+    
+    // Listen to auth changes
+    _authSubscription = supabase.auth.onAuthStateChange.listen((data) {
+      print('*** Auth state changed: ${data.event}');
+      
+      // Only update if the session actually changed
+      if (_lastSession != data.session) {
+        print('*** Session changed from ${_lastSession?.user?.email} to ${data.session?.user?.email}');
+        _lastSession = data.session;
+        _authNotifier.value = data.session;
+      } else {
+        print('*** Same session, ignoring duplicate event');
+      }
+    });
+
+    setState(() {
+      _isInitialized = true;
     });
   }
 
   @override
   void dispose() {
-    // Cancel the subscription when the widget is disposed to prevent memory leaks
     _authSubscription.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This build method now runs every time the auth state changes
-    final session = Supabase.instance.client.auth.currentSession;
-    if (session == null) {
-      // If there's no session, show CreateAccountPage as the starting point
-      return const CreateAccountPage();
-    } else {
-      // Otherwise, the user is logged in, show the main app
-      return const ZonesPage();
+    if (!_isInitialized) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
+
+    return ValueListenableBuilder<Session?>(
+      valueListenable: _authNotifier,
+      builder: (context, session, child) {
+        print('*** ValueListenableBuilder rebuild - hasSession: ${session != null}');
+        
+        if (session == null) {
+          print('*** Showing CreateAccountPage');
+          return const CreateAccountPage();
+        } else {
+          print('*** Showing ZonesPage');
+          return const ZonesPage();
+        }
+      },
+    );
   }
 }

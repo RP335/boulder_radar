@@ -133,6 +133,7 @@ class _SignInPageState extends State<SignInPage> {
                   onPressed: _isLoading ? null : _signIn,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF8A2BE2),
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
@@ -160,7 +161,7 @@ class _SignInPageState extends State<SignInPage> {
                 height: 50,
                 child: OutlinedButton.icon(
                   onPressed: _isLoading ? null : _signInWithGoogle,
-                  icon: Image.asset('assets/google_logo.png', height: 20, width: 20),
+                  icon: Image.asset('assets/signin-assets/Android/png@3x/neutral/android_neutral_rd_na@3x.png', height: 20, width: 20),
                   label: const Text('Continue with Google', style: TextStyle(color: Colors.white)),
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(color: Colors.grey.shade800),
