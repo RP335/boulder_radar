@@ -29,7 +29,10 @@ class _SignInPageState extends State<SignInPage> {
   }
 
   Future<void> _signIn() async {
-    setState(() { _isLoading = true; _errorText = null; });
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
     try {
       await _supabase.auth.signInWithPassword(
         email: _emailController.text.trim(),
@@ -41,27 +44,38 @@ class _SignInPageState extends State<SignInPage> {
         );
       }
     } on AuthException catch (error) {
-      setState(() { _errorText = error.message; });
+      // NEW: Check for the specific "Email not confirmed" error
+      if (error.message == 'Email not confirmed') {
+        setState(() {
+          _errorText = 'Email not confirmed. Please check your inbox and click the verification link.';
+        });
+      } else {
+        // Handle other auth errors like invalid credentials
+        setState(() {
+          _errorText = error.message;
+        });
+      }
     } catch (e) {
-      setState(() { _errorText = 'An unexpected error occurred.'; });
+      setState(() {
+        _errorText = 'An unexpected error occurred.';
+      });
     } finally {
       if (mounted) {
-        setState(() { _isLoading = false; });
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
 
-  // NEW: Added Google Sign-In logic here as well
   Future<void> _signInWithGoogle() async {
     setState(() { _isLoading = true; _errorText = null; });
     try {
-      // THIS IS THE LINE TO FIX THE REDIRECT ISSUE (see part 2 below)
       await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
-        // redirectTo: 'com.boulder_radar.app://login-callback/', 
         redirectTo: kIsWeb 
         ? 'http://localhost:3000/auth/callback'
-        : 'com.boulder_radar.app://login-callback',
+        : 'com.boulderradar.app://login-callback/',
       );
     } on AuthException catch (error) {
       setState(() { _errorText = error.message; });
@@ -147,7 +161,6 @@ class _SignInPageState extends State<SignInPage> {
                 ),
               ),
               const SizedBox(height: 24),
-              // NEW: "OR" Divider
               const Row(
                 children: [
                   Expanded(child: Divider(color: Colors.grey)),
@@ -159,7 +172,6 @@ class _SignInPageState extends State<SignInPage> {
                 ],
               ),
               const SizedBox(height: 24),
-              // NEW: "Continue with Google" Button
               SizedBox(
                 width: double.infinity,
                 height: 50,

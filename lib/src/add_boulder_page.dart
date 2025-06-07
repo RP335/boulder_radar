@@ -45,7 +45,7 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
   XFile? _selectedImageXFile;
   Map<String, dynamic>? _drawingResultData; // To store data from DrawingPage
 
-  LocationInputType _locationInputType = LocationInputType.gps;
+  LocationInputType _locationInputType = LocationInputType.manual;
   bool _isLoading = false;
   String _submissionStatus = "";
 

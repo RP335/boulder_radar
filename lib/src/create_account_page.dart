@@ -5,7 +5,6 @@ import 'signin_page.dart';
 import 'zones_page.dart'; // Assuming this is your main app page after login
 import 'package:flutter/foundation.dart'; // for kIsWeb
 
-
 class CreateAccountPage extends StatefulWidget {
   const CreateAccountPage({Key? key}) : super(key: key);
 
@@ -51,12 +50,23 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
         data: {'full_name': _nameController.text.trim()},
+        emailRedirectTo: 'com.boulderradar.app://login-callback/'
       );
-      // Navigate to home page on success.
-      // A confirmation email might be sent, so you might want to show a message.
+
+      // Show success message and navigate to the sign-in page.
       if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Account Created! Please verify your email to activate and sign in.',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 5), // Keep the message visible a bit longer
+          ),
+        );
         Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const ZonesPage()),
+          MaterialPageRoute(builder: (_) => const SignInPage()),
         );
       }
     } on AuthException catch (error) {
@@ -84,10 +94,9 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
     try {
       await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
-        // redirectTo: 'com.boulder_radar.app://login-callback/'
         redirectTo: kIsWeb
             ? 'http://localhost:3000/auth/callback'
-            : 'com.boulder_radar.app://login-callback',
+            : 'com.boulderradar.app://login-callback/',
       );
     } on AuthException catch (error) {
       setState(() {
@@ -173,7 +182,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
                   onPressed: _isLoading ? null : _signUp,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF8A2BE2),
-                    foregroundColor: Colors.white, // 👈 Add this
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
