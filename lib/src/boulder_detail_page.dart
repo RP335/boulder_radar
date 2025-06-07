@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:shared_preferences/shared_preferences.dart'; // Import shared_preferences
+import 'dart:convert'; // Required for jsonEncode and jsonDecode
 
 class BoulderDetailPage extends StatefulWidget {
   final String boulderId; // Changed to accept boulderId
+  final String zoneId;
 
-  const BoulderDetailPage({Key? key, required this.boulderId})
-      : super(key: key);
-
+  const BoulderDetailPage({
+    Key? key,
+    required this.boulderId,
+    required this.zoneId, // Make it required
+  }) : super(key: key);
   @override
   State<BoulderDetailPage> createState() => _BoulderDetailPageState();
 }
@@ -16,6 +21,10 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
   final SupabaseClient _supabase = Supabase.instance.client;
   bool _isLoading = true;
   bool _isDeleting = false;
+  bool _isSaving = false; // To track saving state
+  bool _isSaved = false; // To track if the boulder is already saved
+  bool _didSaveOccur = false; // <-- ADD THIS FLAG
+
   Map<String, dynamic>? _boulderData;
   String? _error;
   String? _currentUserId; // To store the current user's ID
@@ -25,6 +34,67 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     super.initState();
     _currentUserId = _supabase.auth.currentUser?.id; // Get current user ID
     _fetchBoulderDetails();
+    _checkIfSaved(); // Check saved status on init
+  }
+
+  Future<void> _checkIfSaved() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedBoulders = prefs.getStringList('saved_boulders') ?? [];
+    // Check if any saved boulder's JSON string contains the current boulder's ID
+    if (mounted) {
+      setState(() {
+        _isSaved = savedBoulders
+            .any((b) => (jsonDecode(b) as Map)['id'] == widget.boulderId);
+      });
+    }
+  }
+
+  // REPLACE your entire _saveBoulderForOffline function with this one.
+
+  // Use this clean _saveBoulderForOffline function.
+// And ensure the back button in your AppBar is just a simple Navigator.of(context).pop().
+
+  Future<void> _saveBoulderForOffline() async {
+    if (_boulderData == null) return;
+
+    setState(() => _isSaving = true);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final List<String> savedBoulders =
+          prefs.getStringList('saved_boulders') ?? [];
+      final Map<String, dynamic> dataToSave = Map.from(_boulderData!);
+      dataToSave['zone_id'] = widget.zoneId;
+
+      savedBoulders.removeWhere(
+          (b) => (jsonDecode(b) as Map)['id'] == _boulderData!['id']);
+      savedBoulders.add(jsonEncode(dataToSave!));
+
+      await prefs.setStringList('saved_boulders', savedBoulders);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Boulder saved for offline use.'),
+              backgroundColor: Colors.green),
+        );
+        // On success, pop the screen and return 'true'.
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Failed to save boulder: ${e.toString()}'),
+              backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        // This setState is not strictly necessary since we are popping,
+        // but it's good practice.
+        setState(() => _isSaving = false);
+      }
+    }
   }
 
   Future<void> _fetchBoulderDetails() async {
@@ -163,7 +233,8 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     final name = _boulderData!['name'] as String? ?? 'Unnamed Boulder';
     final grade = _boulderData!['grade'] as String? ?? '—';
     final description = _boulderData!['description'] as String? ?? '';
-    final uploadedBy = _boulderData!['uploaded_by'] as String?; // Get uploaded_by
+    final uploadedBy =
+        _boulderData!['uploaded_by'] as String?; // Get uploaded_by
 
     // Location (Coordinates)
     final locationData = _boulderData!['location'] as Map<String, dynamic>?;
@@ -194,15 +265,20 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     } else {
       landmarkDescription = '';
     }
-    
-    // Determine if the current user can delete this boulder
-    final bool canDelete = (_currentUserId != null && uploadedBy == _currentUserId);
 
+    // Determine if the current user can delete this boulder
+    final bool canDelete =
+        (_currentUserId != null && uploadedBy == _currentUserId);
 
     return Scaffold(
       backgroundColor: Colors.grey.shade900,
       appBar: AppBar(
-        title: Text(name),
+        title:
+            const Text('Boulder Deets', style: TextStyle(color: Colors.white)),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
         centerTitle: true,
         backgroundColor:
             Colors.grey.shade800, // Slightly different shade for AppBar
@@ -218,7 +294,8 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                       child: CircularProgressIndicator(
                           color: Colors.white, strokeWidth: 2.5),
                     )
-                  : const Icon(Icons.delete_forever_outlined, color: Colors.white), // Explicitly set icon color
+                  : const Icon(Icons.delete_forever_outlined,
+                      color: Colors.white), // Explicitly set icon color
               onPressed: (_isDeleting || id.isEmpty)
                   ? null
                   : () async {
@@ -258,16 +335,17 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                 borderRadius: BorderRadius.circular(12.0),
                 child: Image.network(
                   primaryImageUrl,
-                  fit: BoxFit.contain, // Changed from BoxFit.cover to BoxFit.contain
+                  fit: BoxFit
+                      .contain, // Changed from BoxFit.cover to BoxFit.contain
                   width: double.infinity,
                   // Removed fixed height to allow image to determine its aspect ratio within bounds
-                  // height: 250, 
+                  // height: 250,
                   loadingBuilder: (BuildContext context, Widget child,
                       ImageChunkEvent? loadingProgress) {
                     if (loadingProgress == null) return child;
                     // Maintain a placeholder aspect ratio or min height during loading if desired
                     return AspectRatio(
-                      aspectRatio: 16/9, // Or another common aspect ratio
+                      aspectRatio: 16 / 9, // Or another common aspect ratio
                       child: Container(
                         color: Colors.grey.shade800,
                         child: Center(
@@ -283,7 +361,7 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                     );
                   },
                   errorBuilder: (context, error, stackTrace) => AspectRatio(
-                    aspectRatio: 16/9, // Or another common aspect ratio
+                    aspectRatio: 16 / 9, // Or another common aspect ratio
                     child: Container(
                       // height: 250,
                       color: Colors.grey.shade800,
@@ -304,8 +382,9 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                 ),
               )
             else
-              AspectRatio( // Use AspectRatio for placeholder as well
-                aspectRatio: 16/9,
+              AspectRatio(
+                // Use AspectRatio for placeholder as well
+                aspectRatio: 16 / 9,
                 child: Container(
                   // Placeholder if no image
                   // height: 250,
@@ -329,19 +408,18 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                 ),
               ),
 
-            const SizedBox(height: 20),
+            // const SizedBox(height: 20),
 
-            // Name (already in AppBar, but can be here too if desired)
-            // Text(name, style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: Colors.white, fontWeight: FontWeight.bold)),
-            // const SizedBox(height: 8),
+            const SizedBox(height: 24),
 
             Text(
-              'Grade: $grade',
+              name,
               style: Theme.of(context)
                   .textTheme
-                  .titleLarge
-                  ?.copyWith(color: Colors.white, fontWeight: FontWeight.w500),
+                  .headlineMedium
+                  ?.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
             ),
+
             const SizedBox(height: 16),
 
             _buildSectionTitle('Description'),
@@ -359,6 +437,16 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                   : landmarkDescription,
               style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                   color: Colors.white.withOpacity(0.85), height: 1.5),
+            ),
+            const SizedBox(height: 20),
+
+            _buildSectionTitle('Grade'),
+            Text(
+              grade,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(color: Colors.white, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 20),
 
@@ -413,6 +501,34 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 16),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: _isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2.0))
+                    : Icon(_isSaved
+                        ? Icons.check_circle
+                        : Icons.save_alt_outlined),
+                label:
+                    Text(_isSaved ? 'Saved Offline' : 'Save for Offline Use'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      _isSaved ? Colors.indigo : Colors.orange.shade800,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                onPressed:
+                    _isSaving || _isSaved ? null : _saveBoulderForOffline,
+              ),
             ),
             const SizedBox(height: 30), // Bottom padding
           ],
