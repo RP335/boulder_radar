@@ -30,6 +30,7 @@ class _DrawingPageState extends State<DrawingPage> {
   final List<DrawnLine> _lines = <DrawnLine>[];
   DrawnLine? _currentLine;
   ui.Image? _backgroundImage;
+  final _transformationController = TransformationController(); // ADD THIS LINE
 
   // Drawing tool settings
   Color _selectedColor = Colors.redAccent;
@@ -51,6 +52,28 @@ class _DrawingPageState extends State<DrawingPage> {
         setState(() {
           _backgroundImage = frame.image;
         });
+
+        // --- THIS IS THE NEW LOGIC ---
+        // Run this after the first frame is rendered.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _backgroundImage == null) return;
+
+          // Get the size of the widget displaying the image.
+          final RenderBox box = context.findRenderObject() as RenderBox;
+          final viewportSize = box.size;
+          final imageSize = Size(_backgroundImage!.width.toDouble(),
+              _backgroundImage!.height.toDouble());
+
+          // Calculate the scale to fit the image within the viewport.
+          final scale = (viewportSize.width / imageSize.width <
+                  viewportSize.height / imageSize.height)
+              ? viewportSize.width / imageSize.width
+              : viewportSize.height / imageSize.height;
+
+          // Set the initial transformation on the controller.
+          _transformationController.value = Matrix4.identity()..scale(scale);
+        });
+        // --- END OF NEW LOGIC ---
       }
     } catch (e) {
       print("Error loading image for drawing: $e");
@@ -229,6 +252,9 @@ class _DrawingPageState extends State<DrawingPage> {
                   ? const Center(
                       child: CircularProgressIndicator(color: Colors.white))
                   : InteractiveViewer(
+                      transformationController:
+                          _transformationController, // ADD THIS LINE
+
                       // Set constraints to false to allow the child to be its natural size.
                       constrained: false,
                       // Set boundary margins to allow panning around the entire image.
@@ -285,7 +311,8 @@ class _DrawingPageState extends State<DrawingPage> {
               const PopupMenuItem<double>(value: 3.0, child: Text('Thin')),
               const PopupMenuItem<double>(value: 5.0, child: Text('Medium')),
               const PopupMenuItem<double>(value: 8.0, child: Text('Thick')),
-              const PopupMenuItem<double>(value: 12.0, child: Text('Extra Thick')),
+              const PopupMenuItem<double>(
+                  value: 12.0, child: Text('Extra Thick')),
             ],
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -334,9 +361,7 @@ class DrawingPainter extends CustomPainter {
   final DrawnLine? currentLine;
 
   DrawingPainter(
-      {required this.backgroundImage,
-      required this.lines,
-      this.currentLine});
+      {required this.backgroundImage, required this.lines, this.currentLine});
 
   @override
   void paint(Canvas canvas, Size size) {

@@ -16,13 +16,13 @@ import 'drawing_page.dart';
 enum LocationInputType { gps, manual }
 
 class AddBoulderPage extends StatefulWidget {
-  final String zoneId;
-  final String zoneName;
+  final String areaId;
+  final String areaName;
 
   const AddBoulderPage({
     Key? key,
-    required this.zoneId,
-    required this.zoneName,
+    required this.areaId,
+    required this.areaName,
   }) : super(key: key);
 
   @override
@@ -463,7 +463,7 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
 
       final boulderPayload = {
         'name': _nameController.text.trim(),
-        'zone_id': widget.zoneId,
+        'area_id': widget.areaId, // <-- THE KEY CHANGE
         'uploaded_by': userId,
         'latitude': boulderLat,
         'longitude': boulderLng,
@@ -638,7 +638,9 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     return Scaffold(
       backgroundColor: Colors.grey.shade900,
       appBar: AppBar(
-        title: Text('Add Boulder in ${widget.zoneName}'),
+        // --- THIS IS THE FIX ---
+        title: Text(
+            'Add Boulder in ${widget.areaName}'), // <-- Use areaName instead of zoneName
         centerTitle: true,
         backgroundColor: Colors.grey.shade800,
         foregroundColor: Colors.white,

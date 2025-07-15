@@ -5,14 +5,14 @@ import 'package:shared_preferences/shared_preferences.dart'; // Import shared_pr
 import 'dart:convert'; // Required for jsonEncode and jsonDecode
 
 class BoulderDetailPage extends StatefulWidget {
-  final String boulderId; // Changed to accept boulderId
-  final String zoneId;
+  // --- CONSTRUCTOR SIMPLIFIED ---
+  final String boulderId;
 
   const BoulderDetailPage({
     Key? key,
     required this.boulderId,
-    required this.zoneId, // Make it required
   }) : super(key: key);
+
   @override
   State<BoulderDetailPage> createState() => _BoulderDetailPageState();
 }
@@ -56,18 +56,20 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
 
   Future<void> _saveBoulderForOffline() async {
     if (_boulderData == null) return;
-
     setState(() => _isSaving = true);
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final List<String> savedBoulders =
           prefs.getStringList('saved_boulders') ?? [];
-      final Map<String, dynamic> dataToSave = Map.from(_boulderData!);
-      dataToSave['zone_id'] = widget.zoneId;
 
-      savedBoulders.removeWhere(
-          (b) => (jsonDecode(b) as Map)['id'] == _boulderData!['id']);
-      savedBoulders.add(jsonEncode(dataToSave!));
+      // The data from the RPC now contains everything we need. No need to add it manually.
+      final Map<String, dynamic> dataToSave = Map.from(_boulderData!);
+
+      // Remove any old version of this boulder before adding the new one
+      savedBoulders
+          .removeWhere((b) => (jsonDecode(b) as Map)['id'] == dataToSave['id']);
+      savedBoulders.add(jsonEncode(dataToSave));
 
       await prefs.setStringList('saved_boulders', savedBoulders);
 
@@ -77,8 +79,10 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
               content: Text('Boulder saved for offline use.'),
               backgroundColor: Colors.green),
         );
-        // On success, pop the screen and return 'true'.
-        Navigator.of(context).pop(true);
+        setState(() {
+          _isSaved = true;
+          _isSaving = false;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -89,9 +93,7 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
         );
       }
     } finally {
-      if (mounted) {
-        // This setState is not strictly necessary since we are popping,
-        // but it's good practice.
+      if (mounted && _isSaving) {
         setState(() => _isSaving = false);
       }
     }
@@ -233,18 +235,17 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     final name = _boulderData!['name'] as String? ?? 'Unnamed Boulder';
     final grade = _boulderData!['grade'] as String? ?? '—';
     final description = _boulderData!['description'] as String? ?? '';
-    final uploadedBy =
-        _boulderData!['uploaded_by'] as String?; // Get uploaded_by
+    final uploadedBy = _boulderData!['uploaded_by'] as String?;
 
-    // Location (Coordinates)
+    final areaName = _boulderData!['area_name'] as String? ?? 'Unknown Area';
+    final zoneName = _boulderData!['zone_name'] as String? ?? 'Unknown Zone';
+
     final locationData = _boulderData!['location'] as Map<String, dynamic>?;
     final coordinates = locationData?['coordinates'] as List<dynamic>?;
-    final longitude = coordinates != null && coordinates.isNotEmpty
-        ? coordinates[0]?.toString()
-        : null;
-    final latitude = coordinates != null && coordinates.length > 1
-        ? coordinates[1]?.toString()
-        : null;
+    final longitude =
+        coordinates?.isNotEmpty == true ? coordinates![0]?.toString() : null;
+    final latitude =
+        coordinates?.length == 2 ? coordinates![1]?.toString() : null;
 
     // Images (taking the first boulder image if available)
     final imagesList = _boulderData!['images'] as List<dynamic>?;

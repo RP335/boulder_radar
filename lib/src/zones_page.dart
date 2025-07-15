@@ -1,9 +1,10 @@
 import 'package:boulder_radar/src/create_account_page.dart';
+import 'package:boulder_radar/src/zones_areas_list_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'zone_boulder_list_page.dart';
+import 'area_boulder_list_page.dart';
 
 class ZonesPage extends StatefulWidget {
   const ZonesPage({Key? key}) : super(key: key);
@@ -15,7 +16,7 @@ class ZonesPage extends StatefulWidget {
 class _ZonesPageState extends State<ZonesPage> {
   final SupabaseClient _supabase = Supabase.instance.client;
   late Future<List<Map<String, dynamic>>> _zonesFuture;
-  
+
   // Tracks the offline state to show/hide the banner
   bool _isOffline = false;
 
@@ -41,7 +42,6 @@ class _ZonesPageState extends State<ZonesPage> {
         setState(() => _isOffline = false);
       }
       return data;
-
     } catch (e) {
       // 3. IF FETCHING FAILS, TRY TO LOAD FROM CACHE
       print('Failed to fetch zones from network, trying cache. Error: $e');
@@ -114,7 +114,8 @@ class _ZonesPageState extends State<ZonesPage> {
               child: const Text(
                 "You're offline. Showing cached zones.",
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               ),
             ),
           // --- NEW: Expanded takes up the remaining space ---
@@ -195,7 +196,8 @@ class _ZonesPageState extends State<ZonesPage> {
                               onTap: () {
                                 Navigator.of(context).push(
                                   MaterialPageRoute(
-                                    builder: (_) => ZoneBoulderListPage(
+                                    builder: (_) => ZoneAreasListPage(
+                                      // <-- CHANGE
                                       zoneId: zoneId,
                                       zoneName: zoneName,
                                     ),
