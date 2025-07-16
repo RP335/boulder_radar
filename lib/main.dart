@@ -15,8 +15,6 @@ const _supabaseUrl = '';
 const _supabaseKey =
     '';
 
-
-
 Future<void> main() async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
