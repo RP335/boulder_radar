@@ -1,19 +1,23 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:geolocator/geolocator.dart';
+import 'package:geolocator/geolocator.dart' as geo;
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart'
+    hide LatLng, Size, ImageSource;
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter/foundation.dart'; // for kIsWeb
 
-// Ensure drawing_page.dart exists in lib/src/
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:boulder_radar/services/upload_service.dart'; // Adjust path if needed
+
 import 'drawing_page.dart';
+import '../widgets/interactive_map_picker.dart';
+import 'dart:ui' as ui;
 
-enum LocationInputType { gps, manual }
+enum LocationInputType { map, manual }
 
 class AddBoulderPage extends StatefulWidget {
   final String areaId;
@@ -30,6 +34,7 @@ class AddBoulderPage extends StatefulWidget {
 }
 
 class _AddBoulderPageState extends State<AddBoulderPage> {
+  static const String _mapboxAccessToken = 'YOUR_MAPBOX_PUBLIC_TOKEN_HERE';
   final _formKey = GlobalKey<FormState>();
   final SupabaseClient _supabase = Supabase.instance.client;
 
@@ -39,54 +44,18 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
   final _manualLatController = TextEditingController();
   final _manualLngController = TextEditingController();
   final _pastedCoordsController = TextEditingController();
+  // Point? _selectedMapPoint; // Use Point instead of ScreenCoordinate
 
-  Uint8List? _selectedImageBytes;
-  String? _selectedGrade;
   XFile? _selectedImageXFile;
-  Map<String, dynamic>? _drawingResultData; // To store data from DrawingPage
+  Uint8List? _selectedImageBytes;
+  Map<String, dynamic>? _drawingResultData;
+  String? _selectedGrade;
+  // ScreenCoordinate? _selectedMapCoordinates;
+  Point? _selectedMapPoint;
 
-  LocationInputType _locationInputType = LocationInputType.manual;
+  LocationInputType _locationInputType = LocationInputType.map;
   bool _isLoading = false;
   String _submissionStatus = "";
-
-  final List<String> _gradeOptions = [
-    'V0',
-    'V1',
-    'V2',
-    'V3',
-    'V4',
-    'V5',
-    'V6',
-    'V7',
-    'V8',
-    'V9',
-    'V10',
-    'V11',
-    'V12',
-    'V13',
-    'V14',
-    'V15',
-    'V16',
-    '6A',
-    '6A+',
-    '6B',
-    '6B+',
-    '6C',
-    '6C+',
-    '7A',
-    '7A+',
-    '7B',
-    '7B+',
-    '7C',
-    '7C+',
-    '8A',
-    '8A+',
-    '8B',
-    '8B+',
-    '8C',
-    '8C+',
-    '9A'
-  ];
 
   final List<String> _vScaleGrades = [
     'V0',
@@ -107,7 +76,6 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     'V15',
     'V16'
   ];
-
   final List<String> _fontScaleGrades = [
     '6A',
     '6A+',
@@ -130,60 +98,24 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     '9A'
   ];
 
-  List<DropdownMenuItem<String>> _buildGradeDropdownItems() {
-    final List<DropdownMenuItem<String>> items = [];
-
-    // Hueco / V-Scale Header
-    items.add(
-      DropdownMenuItem(
-        enabled: false, // Make it unselectable
-        child: Text(
-          "Hueco Scale (USA)",
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.deepPurpleAccent[100],
-          ),
-        ),
-      ),
-    );
-
-    // V-Scale items
-    items.addAll(_vScaleGrades.map(
-      (grade) => DropdownMenuItem<String>(
-        value: grade,
-        child: Text(grade, style: const TextStyle(color: Colors.white)),
-      ),
-    ));
-
-    // Divider
-    items.add(const DropdownMenuItem(
-      enabled: false,
-      child: Divider(color: Colors.white30),
-    ));
-
-    // Font Scale Header
-    items.add(
-      DropdownMenuItem(
-        enabled: false,
-        child: Text(
-          "Fontainebleau Scale (Font)",
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            color: Colors.deepPurpleAccent[100],
-          ),
-        ),
-      ),
-    );
-
-    // Font Scale items
-    items.addAll(_fontScaleGrades.map(
-      (grade) => DropdownMenuItem<String>(
-        value: grade,
-        child: Text(grade, style: const TextStyle(color: Colors.white)),
-      ),
-    ));
-
-    return items;
+  void _resetForm() {
+    _formKey.currentState?.reset();
+    _nameController.clear();
+    _landmarkDescriptionController.clear();
+    _boulderDescriptionController.clear();
+    _manualLatController.clear();
+    _manualLngController.clear();
+    _pastedCoordsController.clear();
+    setState(() {
+      _submissionStatus = '';
+      _isLoading = false;
+      _selectedGrade = null;
+      _selectedImageXFile = null;
+      _selectedImageBytes = null;
+      _drawingResultData = null;
+      _selectedMapPoint = null;
+      _locationInputType = LocationInputType.map;
+    });
   }
 
   @override
@@ -195,6 +127,45 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     _manualLngController.dispose();
     _pastedCoordsController.dispose();
     super.dispose();
+  }
+
+  List<DropdownMenuItem<String>> _buildGradeDropdownItems() {
+    final List<DropdownMenuItem<String>> items = [];
+    items.add(DropdownMenuItem(
+      enabled: false,
+      child: Text(
+        "Hueco Scale (USA)",
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.deepPurpleAccent[100],
+        ),
+      ),
+    ));
+    items.addAll(_vScaleGrades.map(
+      (grade) => DropdownMenuItem<String>(
+        value: grade,
+        child: Text(grade, style: const TextStyle(color: Colors.white)),
+      ),
+    ));
+    items.add(const DropdownMenuItem(
+        enabled: false, child: Divider(color: Colors.white30)));
+    items.add(DropdownMenuItem(
+      enabled: false,
+      child: Text(
+        "Fontainebleau Scale (Font)",
+        style: TextStyle(
+          fontWeight: FontWeight.bold,
+          color: Colors.deepPurpleAccent[100],
+        ),
+      ),
+    ));
+    items.addAll(_fontScaleGrades.map(
+      (grade) => DropdownMenuItem<String>(
+        value: grade,
+        child: Text(grade, style: const TextStyle(color: Colors.white)),
+      ),
+    ));
+    return items;
   }
 
   Future<void> _handleImageTap() async {
@@ -211,27 +182,24 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     try {
       final XFile? imageXFile = await picker.pickImage(
         source: ImageSource.gallery,
-        imageQuality: 70, // Compress slightly
-        maxWidth: 1200, // Resize for performance
+        imageQuality: 70,
+        maxWidth: 1200,
         maxHeight: 1200,
       );
-
-      if (imageXFile != null) {
-        if (mounted) {
-          setState(() {
-            _selectedImageXFile = imageXFile;
-            _drawingResultData =
-                null; // Clear previous drawing data for new image
-          });
-        }
+      if (imageXFile != null && mounted) {
+        setState(() {
+          _selectedImageXFile = imageXFile;
+          _selectedImageBytes = null;
+          _drawingResultData = null;
+        });
       }
     } catch (e) {
-      print("Error picking image: $e");
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Error picking image: ${e.toString()}'),
-              backgroundColor: Colors.red),
+            content: Text('Error picking image: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -239,7 +207,6 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
 
   Future<void> _navigateToDrawingPage() async {
     if (_selectedImageXFile == null || !mounted) return;
-
     final result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => DrawingPage(imageXFile: _selectedImageXFile!),
@@ -247,121 +214,36 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     );
 
     if (result is Map<String, dynamic> && mounted) {
-      final bool hasDrawings = result['has_drawings'] as bool? ?? false;
-      final Uint8List newBytes = result['updatedImageBytes'] as Uint8List;
-
-      if (kIsWeb) {
-        setState(() {
-          _selectedImageBytes = newBytes;
-          _drawingResultData = result;
-        });
-      } else {
-        final String newPath = result['updatedImagePath'] as String;
-        setState(() {
-          _selectedImageXFile = XFile(newPath);
-          _drawingResultData = result;
-        });
-      }
-
+      final hasDrawings = result['has_drawings'] as bool? ?? false;
+      setState(() {
+        _drawingResultData = result;
+        if (kIsWeb) {
+          _selectedImageBytes = result['updatedImageBytes'] as Uint8List;
+        } else {
+          _selectedImageXFile = XFile(result['updatedImagePath'] as String);
+        }
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(hasDrawings ? 'Lines updated!' : 'No lines drawn.'),
+          content: Text(
+            hasDrawings ? 'Lines updated!' : 'No lines drawn.',
+          ),
           backgroundColor: hasDrawings ? Colors.blueAccent : Colors.orange,
         ),
       );
     }
   }
 
-  Future<void> _handleGpsSelection() async {
-    if (!mounted) return;
-
-    setState(() {
-      _isLoading = true; // Show loading indicator while fetching
-    });
-
-    try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        throw Exception(
-            'Location permission not granted. Please enable it in your device settings.');
-      }
-
-      final Position pos = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.high)
-          .timeout(const Duration(seconds: 10)); // 10 second timeout
-
-      // SUCCESS!
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _locationInputType = LocationInputType.gps; // Confirm GPS selection
-          // Optionally pre-fill the manual fields for user reference
-          _manualLatController.text = pos.latitude.toStringAsFixed(6);
-          _manualLngController.text = pos.longitude.toStringAsFixed(6);
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('GPS Location Acquired!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      // FAILURE
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _locationInputType =
-              LocationInputType.manual; // <<-- REVERT to manual
-        });
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: Colors.grey.shade800,
-            title: const Text('Location Error',
-                style: TextStyle(color: Colors.white)),
-            content: Text(
-              'Could not get your current location. Please check your GPS signal and permissions, or enter the coordinates manually.\n\nError: ${e.toString().replaceFirst("Exception: ", "")}',
-              style: const TextStyle(color: Colors.white70),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
-      }
-    }
-  }
-
   void _parseAndSetPastedCoordinates(String pastedText) {
-    if (pastedText.trim().isEmpty) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Clipboard is empty.'),
-              backgroundColor: Colors.orange),
-        );
-      return;
-    }
+    if (pastedText.trim().isEmpty) return;
     final RegExp coordRegex = RegExp(
-        r"[\[\(\s]*([+-]?\d+\.?\d+)\s*[,;\s]+\s*([+-]?\d+\.?\d*)[\]\)\s]*");
-    Iterable<RegExpMatch> matches = coordRegex.allMatches(pastedText.trim());
+      r"[\[\(\s]*([+-]?\d+\.?\d+)\s*[,;\s]+\s*([+-]?\d+\.?\d*)[\]\)\s]*",
+    );
+    final match = coordRegex.firstMatch(pastedText.trim());
 
-    if (matches.isNotEmpty) {
-      final match = matches.first;
-      final String firstNumStr = match.group(1)!;
-      final String secondNumStr = match.group(2)!;
-
-      double? val1 = double.tryParse(firstNumStr);
-      double? val2 = double.tryParse(secondNumStr);
+    if (match != null) {
+      double? val1 = double.tryParse(match.group(1)!);
+      double? val2 = double.tryParse(match.group(2)!);
 
       if (val1 != null && val2 != null) {
         double lat, lng;
@@ -372,49 +254,222 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
           lat = val2;
           lng = val1;
         } else {
-          if (mounted)
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Pasted values out of Lat/Lng range.'),
-                  backgroundColor: Colors.orange),
-            );
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Pasted values out of Lat/Lng range.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
           return;
         }
         _manualLatController.text = lat.toStringAsFixed(6);
         _manualLngController.text = lng.toStringAsFixed(6);
         _pastedCoordsController.clear();
-        if (mounted)
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content: Text('Coords parsed: Lat: $lat, Lng: $lng'),
-                backgroundColor: Colors.green),
-          );
-        if (mounted)
-          setState(() {
-            _locationInputType = LocationInputType.manual;
-          });
-        return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Coords parsed: Lat: $lat, Lng: $lng'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
-    }
-    if (mounted)
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Pasted text not recognized as "lat, lng".'),
-            backgroundColor: Colors.orange),
+          content: Text('Pasted text not recognized as "lat, lng".'),
+          backgroundColor: Colors.orange,
+        ),
       );
+    }
   }
 
+  // REPLACE the entire _publishBoulder function in add_boulder_page.dart with this one.
+
+// Future<void> _publishBoulder() async {
+//   if (!mounted) return;
+//   setState(() {
+//     _submissionStatus = "";
+//     _isLoading = true;
+//   });
+
+//   if (!_formKey.currentState!.validate()) {
+//     if (mounted) setState(() => _isLoading = false);
+//     return;
+//   }
+//   if (_selectedGrade == null) {
+//     if (mounted) {
+//       ScaffoldMessenger.of(context).showSnackBar(
+//         const SnackBar(
+//           content: Text('Please select a grade.'),
+//           backgroundColor: Colors.red,
+//         ),
+//       );
+//       setState(() => _isLoading = false);
+//     }
+//     return;
+//   }
+
+//   try {
+//     final userId = _supabase.auth.currentUser?.id;
+//     if (userId == null) throw Exception('User not authenticated.');
+
+//     double? boulderLat;
+//     double? boulderLng;
+
+//     if (_locationInputType == LocationInputType.map) {
+//       if (_selectedMapPoint == null) {
+//         setState(() => _submissionStatus = 'No location pinned, using current GPS...');
+//         final pos = await geo.Geolocator.getCurrentPosition(
+//           desiredAccuracy: geo.LocationAccuracy.high,
+//         );
+//         boulderLat = pos.latitude;
+//         boulderLng = pos.longitude;
+//       } else {
+//         // Correctly access coordinates from the Point object
+//         boulderLat = _selectedMapPoint!.coordinates.lat as double?;
+//         boulderLng = _selectedMapPoint!.coordinates.lng as double?;
+//       }
+//     } else {
+//       boulderLat = double.parse(_manualLatController.text.trim());
+//       boulderLng = double.parse(_manualLngController.text.trim());
+//       if (boulderLat.abs() > 90 || boulderLng.abs() > 180) {
+//         throw Exception('Manual coordinates out of valid range.');
+//       }
+//     }
+
+//     // 1. Create the Boulder Record
+//     final boulderPayload = {
+//       'name': _nameController.text.trim(),
+//       'area_id': widget.areaId,
+//       'uploaded_by': userId,
+//       'latitude': boulderLat,
+//       'longitude': boulderLng,
+//       'grade': _selectedGrade!,
+//       'description': _boulderDescriptionController.text.trim(),
+//     };
+
+//     final boulderResponse = await _supabase.functions.invoke(
+//       'add-boulder',
+//       body: boulderPayload,
+//     );
+//     if (boulderResponse.status != 201) {
+//       throw Exception('Failed to add boulder: ${boulderResponse.data?['error']?.toString() ?? 'Function error'}');
+//     }
+//     final newBoulderId = boulderResponse.data['id'];
+//     if (newBoulderId == null) {
+//       throw Exception('Function did not return new boulder ID.');
+//     }
+
+//     // 2. Add Landmark (if provided)
+//     final String landmarkText = _landmarkDescriptionController.text.trim();
+//     if (landmarkText.isNotEmpty) {
+//       final landmarkPayload = {
+//         'boulder_id': newBoulderId,
+//         'description': landmarkText
+//       };
+//       // No need to `await` this, can run in the background
+//       _supabase.functions.invoke('add-landmark', body: landmarkPayload);
+//     }
+
+//     // 3. --- THIS IS THE MISSING IMAGE LOGIC ---
+//     if (_selectedImageXFile != null || (kIsWeb && _selectedImageBytes != null)) {
+//       Uint8List imageBytesToUpload;
+//       String fileExtension;
+//       String? mimeType;
+
+//       if (kIsWeb) {
+//         if (_selectedImageBytes != null) {
+//           // Web: Use the drawn image bytes
+//           imageBytesToUpload = _selectedImageBytes!;
+//           fileExtension = _selectedImageXFile?.name.split('.').last.toLowerCase() ?? 'png';
+//           mimeType = _selectedImageXFile?.mimeType ?? 'image/png';
+//         } else {
+//           // Web: No drawing, use original image bytes
+//           imageBytesToUpload = await _selectedImageXFile!.readAsBytes();
+//           fileExtension = _selectedImageXFile!.name.split('.').last.toLowerCase();
+//           mimeType = _selectedImageXFile!.mimeType;
+//         }
+//       } else {
+//         // Native: Use the XFile path (which is updated after drawing)
+//         imageBytesToUpload = await _selectedImageXFile!.readAsBytes();
+//         fileExtension = _selectedImageXFile!.name.split('.').last.toLowerCase();
+//         mimeType = _selectedImageXFile!.mimeType;
+//       }
+
+//       final String uniqueFileName = '${newBoulderId}_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+//       // Make sure the bucket name is correct!
+//       final String storagePath = 'public/boulders/$newBoulderId/$uniqueFileName';
+
+//       // 3a. Upload image to Supabase Storage
+//       await _supabase.storage.from('boulder.radar.public.data').uploadBinary(
+//             storagePath,
+//             imageBytesToUpload,
+//             fileOptions: FileOptions(
+//                 contentType: mimeType ?? 'image/$fileExtension', upsert: false),
+//           );
+
+//       // 3b. Get the public URL
+//       final String publicImageUrl = _supabase.storage
+//           .from('boulder.radar.public.data')
+//           .getPublicUrl(storagePath);
+
+//       // 3c. Save image metadata to your database via another edge function
+//       final imagePayload = {
+//         'boulder_id': newBoulderId,
+//         'image_path': publicImageUrl,
+//         'has_drawings': _drawingResultData?['has_drawings'] ?? false,
+//         'drawing_data': _drawingResultData?['drawing_data'],
+//       };
+
+//       // No need to `await` this, can run in the background
+//       _supabase.functions.invoke('add-image', body: imagePayload);
+//     }
+//     // --- END OF MISSING LOGIC ---
+
+//     if (mounted) {
+//       setState(() {
+//         _submissionStatus =
+//             '${_nameController.text.trim()} published successfully!';
+//         _isLoading = false;
+//         _formKey.currentState?.reset();
+//         _nameController.clear();
+//         _landmarkDescriptionController.clear();
+//         _boulderDescriptionController.clear();
+//         _manualLatController.clear();
+//         _manualLngController.clear();
+//         _pastedCoordsController.clear();
+//         _selectedGrade = null;
+//         _selectedImageXFile = null;
+//         _selectedImageBytes = null;
+//         _drawingResultData = null;
+//         _selectedMapPoint = null;
+//         _locationInputType = LocationInputType.map;
+//       });
+//       ScaffoldMessenger.of(context).showSnackBar(
+//         SnackBar(
+//           content: Text(_submissionStatus),
+//           backgroundColor: Colors.green,
+//           duration: const Duration(seconds: 3),
+//         ),
+//       );
+//       await Future.delayed(const Duration(milliseconds: 500));
+//       if (mounted) Navigator.of(context).pop(true);
+//     }
+//   } catch (e) {
+//     if (mounted) {
+//       setState(() {
+//         _submissionStatus =
+//             'Error: ${e.toString().replaceFirst("Exception: ", "")}';
+//         _isLoading = false;
+//       });
+//     }
+//   }
+// }
+
+// REPLACE the entire _publishBoulder function with this one.
   Future<void> _publishBoulder() async {
     if (!mounted) return;
-    setState(() {
-      _submissionStatus = "";
-      _isLoading = true;
-    });
-
-    if (!_formKey.currentState!.validate()) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
+    // 1. Validate the form and grade selection
+    if (!_formKey.currentState!.validate()) return;
     if (_selectedGrade == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -422,207 +477,98 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
               content: Text('Please select a grade.'),
               backgroundColor: Colors.red),
         );
-        setState(() => _isLoading = false);
       }
       return;
     }
 
+    setState(() {
+      _submissionStatus = "";
+      _isLoading = true;
+    });
+
     try {
-      final userId = _supabase.auth.currentUser?.id;
-      if (userId == null)
-        throw Exception('User not authenticated. Please sign in.');
+      double? boulderLat;
+      double? boulderLng;
 
-      double boulderLat;
-      double boulderLng;
-
-      if (_locationInputType == LocationInputType.gps) {
-        LocationPermission permission = await Geolocator.checkPermission();
-        if (permission == LocationPermission.denied ||
-            permission == LocationPermission.deniedForever) {
-          permission = await Geolocator.requestPermission();
-          if (permission == LocationPermission.denied ||
-              permission == LocationPermission.deniedForever) {
-            throw Exception(
-                'Location permission not granted for GPS. Please enable in settings.');
-          }
+      // 2. Determine the location coordinates
+      if (_locationInputType == LocationInputType.map) {
+        if (_selectedMapPoint == null) {
+          // Fallback to current location if no point is pinned
+          final pos = await geo.Geolocator.getCurrentPosition(
+              desiredAccuracy: geo.LocationAccuracy.high);
+          boulderLat = pos.latitude;
+          boulderLng = pos.longitude;
+        } else {
+          boulderLat = _selectedMapPoint!.coordinates.lat as double?;
+          boulderLng = _selectedMapPoint!.coordinates.lng as double?;
         }
-        final Position pos = await Geolocator.getCurrentPosition(
-                desiredAccuracy: LocationAccuracy.high)
-            .timeout(const Duration(seconds: 15), onTimeout: () {
-          throw TimeoutException("Getting current location timed out.");
-        });
-        boulderLat = pos.latitude;
-        boulderLng = pos.longitude;
       } else {
         boulderLat = double.parse(_manualLatController.text.trim());
         boulderLng = double.parse(_manualLngController.text.trim());
-        if (boulderLat.abs() > 90 || boulderLng.abs() > 180) {
-          throw Exception('Manual coordinates out of valid range.');
-        }
       }
 
-      final boulderPayload = {
-        'name': _nameController.text.trim(),
-        'area_id': widget.areaId, // <-- THE KEY CHANGE
-        'uploaded_by': userId,
-        'latitude': boulderLat,
-        'longitude': boulderLng,
-        'grade': _selectedGrade!,
-        'description': _boulderDescriptionController.text.trim(),
-      };
-
-      print('Calling add-boulder with data: $boulderPayload');
-      final FunctionResponse boulderResponse =
-          await _supabase.functions.invoke('add-boulder', body: boulderPayload);
-
-      if (boulderResponse.status != 201) {
-        String errorMsg = boulderResponse.data?['error']?.toString() ??
-            'Function returned status ${boulderResponse.status}';
-        throw Exception('Failed to add boulder: $errorMsg');
-      }
-
-      final newBoulder = boulderResponse.data;
-      if (newBoulder == null || newBoulder['id'] == null) {
-        throw Exception(
-            'Add-boulder function did not return valid new boulder data with ID.');
-      }
-      final String newBoulderId = newBoulder['id'];
-      print('Successfully added boulder with ID: $newBoulderId');
-
-      final String landmarkText = _landmarkDescriptionController.text.trim();
-      if (landmarkText.isNotEmpty) {
-        print('Adding landmark for boulder ID: $newBoulderId');
-        final landmarkPayload = {
-          'boulder_id': newBoulderId,
-          'description': landmarkText
-        };
-        _supabase.functions
-            .invoke('add-landmark', body: landmarkPayload)
-            .then((landmarkResponse) {
-          if (landmarkResponse.status != 201) {
-            print(
-                'Warning: Failed to add landmark: ${landmarkResponse.data?['error'] ?? 'Function error'}');
-          } else {
-            print('Successfully added landmark.');
-          }
-        }).catchError((e) {
-          print('Error calling add-landmark function: $e');
-        });
-      }
-
-      Uint8List imageBytesToUpload;
-      String fileExtension;
-      String? mimeType;
-      if (kIsWeb) {
-        if (_selectedImageBytes != null) {
-          // Web: Drawn image bytes are available
-          imageBytesToUpload = _selectedImageBytes!;
-          // Try to get original extension/mime, default to png
-          final selectedImageXFile =
-              _selectedImageXFile; // Create local variable
-          fileExtension =
-              selectedImageXFile?.name.split('.').last.toLowerCase() ?? 'png';
-          mimeType = selectedImageXFile?.mimeType;
-          // If drawing always results in PNG, or if _selectedImageBytes already implies a type (e.g. from DrawingPage)
-          // you might want to force PNG for consistency if _selectedImageBytes is always PNG.
-          // For now, we assume DrawingPage returns bytes that could match original type or be PNG.
-          // If DrawingPage always outputs PNG:
-          // fileExtension = 'png';
-          // mimeType = 'image/png';
-        } else if (_selectedImageXFile != null) {
-          // Web: No drawn bytes (_selectedImageBytes is null), but original XFile exists.
-          // This means user picked an image but perhaps didn't go to drawing page or no drawing was made/returned.
-          // Upload the original image.
-          print(
-              "Web: Uploading original image as no drawn image bytes are available.");
-          final selectedImageXFile =
-              _selectedImageXFile!; // Create local non-null variable
-          imageBytesToUpload = await selectedImageXFile.readAsBytes();
-          fileExtension = selectedImageXFile.name.split('.').last.toLowerCase();
-          mimeType = selectedImageXFile.mimeType;
+      // 3. Prepare the image bytes for storage
+      Uint8List? imageBytesForUpload;
+      String? imageFileExt;
+      if (_selectedImageXFile != null) {
+        if (kIsWeb && _selectedImageBytes != null) {
+          imageBytesForUpload = _selectedImageBytes;
         } else {
-          // This case should ideally not be reached if the outer 'if' condition is true for kIsWeb
-          throw Exception(
-              "No image data available for web upload despite selection.");
+          imageBytesForUpload = await _selectedImageXFile!.readAsBytes();
+        }
+        imageFileExt = _selectedImageXFile!.name.split('.').last.toLowerCase();
+      }
+
+      // 4. Create the data payload object for our queue
+      // FIX for latitude and longitude nullability
+      final uploadData = PendingUpload(
+        boulderName: _nameController.text.trim(),
+        areaId: widget.areaId,
+        grade: _selectedGrade!,
+        latitude: boulderLat!, // Add '!'
+        longitude: boulderLng!, // Add '!'
+        boulderDescription: _boulderDescriptionController.text.trim(),
+        landmarkDescription: _landmarkDescriptionController.text.trim(),
+        imageBytes: imageBytesForUpload,
+        imageFileExtension: imageFileExt,
+        drawingData: _drawingResultData,
+      );
+
+      // 5. Check connectivity and decide whether to upload or queue
+      final connectivityResult = await Connectivity().checkConnectivity();
+      if (connectivityResult == ConnectivityResult.none) {
+        // Use '==' instead of '.contains()'
+        // --- OFFLINE LOGIC ---
+        await UploadService.instance.queueUpload(uploadData);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Offline. Upload added to queue to sync later.'),
+              backgroundColor: Colors.blueAccent,
+            ),
+          );
         }
       } else {
-        // Native platforms: _selectedImageXFile is not null (guaranteed by outer if condition)
-        // and should point to the (potentially drawn) image file.
-        final selectedImageXFile =
-            _selectedImageXFile!; // Create local non-null variable
-        imageBytesToUpload = await selectedImageXFile.readAsBytes();
-        fileExtension = selectedImageXFile.name.split('.').last.toLowerCase();
-        mimeType = selectedImageXFile.mimeType;
+        // --- ONLINE LOGIC ---
+        final success = await UploadService.instance.performUpload(uploadData);
+        if (success && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content:
+                  Text('${uploadData.boulderName} published successfully!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       }
 
-      final String uniqueFileName =
-          '${newBoulderId}_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
-      final String storagePath =
-          'public/boulders/$newBoulderId/$uniqueFileName';
-
-      print(
-          'Uploading to Supabase Storage bucket "boulder.radar.public.data" at path: $storagePath');
-      await _supabase.storage.from('boulder.radar.public.data').uploadBinary(
-            storagePath,
-            imageBytesToUpload, // Use the determined bytes (original or drawn)
-            fileOptions: FileOptions(
-                contentType: mimeType ??
-                    'image/$fileExtension', // Use determined mimeType
-                upsert: false),
-          );
-      final String publicImageUrl = _supabase.storage
-          .from('boulder.radar.public.data')
-          .getPublicUrl(storagePath);
-      print('Image uploaded. Public URL: $publicImageUrl');
-
-      final imagePayload = {
-        'boulder_id': newBoulderId,
-        'image_path': publicImageUrl,
-        'has_drawings': _drawingResultData?['has_drawings'] ?? false,
-        'drawing_data': _drawingResultData?['drawing_data'],
-      };
-      print('Calling add-image function with payload: $imagePayload');
-      _supabase.functions
-          .invoke('add-image', body: imagePayload)
-          .then((imageDbResponse) {
-        if (imageDbResponse.status != 201) {
-          print(
-              'Warning: Failed to add image record to DB: ${imageDbResponse.data?['error'] ?? 'Function error'}');
-        } else {
-          print('Successfully added image record to DB.');
-        }
-      }).catchError((e) {
-        print('Error calling add-image function: $e');
-      });
-
+      // --- On success (either queued or uploaded), reset and leave ---
       if (mounted) {
-        setState(() {
-          _submissionStatus =
-              '${_nameController.text.trim()} published successfully!';
-          _isLoading = false;
-          _formKey.currentState?.reset();
-          _nameController.clear();
-          _landmarkDescriptionController.clear();
-          _boulderDescriptionController.clear();
-          _manualLatController.clear();
-          _manualLngController.clear();
-          _pastedCoordsController.clear();
-          _selectedGrade = null;
-          _selectedImageXFile = null;
-          _drawingResultData = null;
-          _locationInputType = LocationInputType.gps;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(_submissionStatus),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 3)),
-        );
-        await Future.delayed(const Duration(milliseconds: 500));
-        if (mounted) Navigator.of(context).pop(true);
+        _resetForm(); // Use a helper to clean up the form
+        await Future.delayed(const Duration(milliseconds: 300));
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
-      print('Error publishing boulder: $e');
       if (mounted) {
         setState(() {
           _submissionStatus =
@@ -638,9 +584,7 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     return Scaffold(
       backgroundColor: Colors.grey.shade900,
       appBar: AppBar(
-        // --- THIS IS THE FIX ---
-        title: Text(
-            'Add Boulder in ${widget.areaName}'), // <-- Use areaName instead of zoneName
+        title: Text('Add Boulder in ${widget.areaName}'),
         centerTitle: true,
         backgroundColor: Colors.grey.shade800,
         foregroundColor: Colors.white,
@@ -653,7 +597,7 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              if (_submissionStatus.isNotEmpty) ...[
+              if (_submissionStatus.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16.0),
                   child: Text(
@@ -663,18 +607,12 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                           ? Colors.redAccent[700]
                           : Colors.green[600],
                       fontWeight: FontWeight.bold,
-                      fontSize: 15,
                     ),
                     textAlign: TextAlign.center,
                   ),
                 ),
-              ],
-              // --- Image Section ---
-              // --- Image Section ---
               GestureDetector(
-                onTap: _isLoading
-                    ? null
-                    : _handleImageTap, // Calls _pickImage or _navigateToDrawingPage
+                onTap: _isLoading ? null : _handleImageTap,
                 child: AspectRatio(
                   aspectRatio: 16 / 10,
                   child: Container(
@@ -684,7 +622,6 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                       border:
                           Border.all(color: Colors.grey.shade700, width: 1.5),
                     ),
-                    // Check if there's any image data to display
                     child: (_selectedImageXFile != null ||
                             (kIsWeb && _selectedImageBytes != null))
                         ? Stack(
@@ -692,10 +629,8 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                             children: [
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(10.5),
-                                // Use the new helper method here
                                 child: _buildImageDisplayWidget(),
                               ),
-                              // "Edit Lines" overlay if image is selected
                               Positioned(
                                 bottom: 8,
                                 right: 8,
@@ -703,143 +638,111 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 10, vertical: 5),
                                   decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.65),
-                                      borderRadius: BorderRadius.circular(6)),
-                                  child: Row(
+                                    color: Colors.black.withOpacity(0.65),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      Icon(Icons.edit_outlined,
-                                          color: Colors.white, size: 18),
+                                      Icon(
+                                        Icons.edit_outlined,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
                                       SizedBox(width: 6),
-                                      Text("Draw/Edit Lines",
-                                          style: TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 13)),
+                                      Text(
+                                        "Draw/Edit Lines",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                        ),
+                                      ),
                                     ],
                                   ),
                                 ),
-                              )
+                              ),
                             ],
                           )
-                        : Center(
-                            // Placeholder when no image is selected
+                        : const Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(Icons.add_photo_alternate_outlined,
-                                    size: 60, color: Colors.white60),
-                                const SizedBox(height: 12),
-                                const Text('Tap to add image',
-                                    style: TextStyle(
-                                        color: Colors.white60, fontSize: 16)),
-                                const SizedBox(height: 4),
-                                const Text('(Optional)',
-                                    style: TextStyle(
-                                        color: Colors.white54, fontSize: 12)),
+                                Icon(
+                                  Icons.add_photo_alternate_outlined,
+                                  size: 60,
+                                  color: Colors.white60,
+                                ),
+                                SizedBox(height: 12),
+                                Text(
+                                  'Tap to add image',
+                                  style: TextStyle(
+                                    color: Colors.white60,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                SizedBox(height: 4),
+                                Text(
+                                  '(Optional)',
+                                  style: TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 12,
+                                  ),
+                                ),
                               ],
                             ),
                           ),
                   ),
                 ),
               ),
-// UI Cue text below the image
-// Check if an image is displayed (either via XFile or bytes for web)
               if (_selectedImageXFile != null ||
                   (kIsWeb && _selectedImageBytes != null))
                 Padding(
                   padding: const EdgeInsets.only(top: 8.0, bottom: 12.0),
                   child: Text(
-                    _drawingResultData == null
-                        ? 'Tap image above to draw lines.'
-                        // Ensure has_drawings is accessed safely
-                        : (_drawingResultData!['has_drawings'] as bool? ?? false
-                            ? 'Lines added/updated! Tap image to re-edit.'
-                            : 'Image ready. Tap image to draw lines.'),
+                    (_drawingResultData?['has_drawings'] as bool? ?? false)
+                        ? 'Lines updated! Tap image to re-edit.'
+                        : 'Tap image to draw lines.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
-                        color: Colors.blueGrey[200],
-                        fontSize: 13,
-                        fontStyle: FontStyle.italic),
+                      color: Colors.blueGrey[200],
+                      fontSize: 13,
+                      fontStyle: FontStyle.italic,
+                    ),
                   ),
                 )
               else
-                const SizedBox(
-                    height:
-                        12), // Maintain some space if no image & no text cue
-
-              if (_selectedImageXFile != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8.0, bottom: 12.0),
-                  child: Text(
-                    _drawingResultData == null
-                        ? 'Tap image above to draw lines.'
-                        : (_drawingResultData!['has_drawings'] == true
-                            ? 'Lines added/updated! Tap image to re-edit.'
-                            : 'Image ready. Tap image to draw lines.'),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.blueGrey[200],
-                        fontSize: 13,
-                        fontStyle: FontStyle.italic),
-                  ),
-                )
-              else if (kIsWeb && _selectedImageBytes != null)
-                Image.memory(
-                  _selectedImageBytes!,
-                  width: 200,
-                  height: 200,
-                  fit: BoxFit.cover,
-                )
-              else if (_selectedImageXFile != null)
-                Image.file(
-                  File(_selectedImageXFile!.path),
-                  width: 200,
-                  height: 200,
-                  fit: BoxFit.cover,
-                )
-              else
-                const SizedBox(
-                    height:
-                        12), // Maintain some space if no image & no text cue
-
-              const SizedBox(height: 12), // Adjust spacing
-
+                const SizedBox(height: 12),
               _buildSectionTitle("Boulder Details"),
               TextFormField(
                 controller: _nameController,
                 style: const TextStyle(color: Colors.white),
                 decoration:
                     _inputDecoration('Boulder Name*', isOptional: false),
-                validator: (value) => (value == null || value.trim().isEmpty)
+                validator: (v) => (v == null || v.trim().isEmpty)
                     ? 'Boulder name is required'
                     : null,
               ),
               const SizedBox(height: 16),
-
               DropdownButtonFormField<String>(
                 value: _selectedGrade,
-                items:
-                    _buildGradeDropdownItems(), // <-- USE THE NEW METHOD HERE
-                onChanged: (String? newValue) {
-                  if (newValue != null) {
-                    setState(() => _selectedGrade = newValue);
-                  }
+                items: _buildGradeDropdownItems(),
+                onChanged: (String? v) {
+                  if (v != null) setState(() => _selectedGrade = v);
                 },
                 decoration: _inputDecoration('Select Grade*', isOptional: false)
                     .copyWith(
                   contentPadding:
                       const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
                 ),
-                dropdownColor:
-                    Colors.grey.shade800, // A bit darker for better contrast
-                icon: const Icon(Icons.keyboard_arrow_down_rounded,
-                    color: Colors.white70),
+                dropdownColor: Colors.grey.shade800,
+                icon: const Icon(
+                  Icons.keyboard_arrow_down_rounded,
+                  color: Colors.white70,
+                ),
                 style: const TextStyle(color: Colors.white, fontSize: 16),
-                validator: (value) =>
-                    value == null ? 'Please select a grade' : null,
+                validator: (v) => v == null ? 'Please select a grade' : null,
               ),
               const SizedBox(height: 24),
-
               _buildSectionTitle("Location*"),
               SegmentedButton<LocationInputType>(
                 style: SegmentedButton.styleFrom(
@@ -850,64 +753,65 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                       Colors.deepPurpleAccent.withOpacity(0.8),
                   side: BorderSide(color: Colors.grey.shade700),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
                 segments: const <ButtonSegment<LocationInputType>>[
                   ButtonSegment<LocationInputType>(
-                      value: LocationInputType.gps,
-                      label: Text('Current GPS'),
-                      icon: Icon(Icons.my_location)),
+                    value: LocationInputType.map,
+                    label: Text('Use Map'),
+                    icon: Icon(Icons.map_outlined),
+                  ),
                   ButtonSegment<LocationInputType>(
-                      value: LocationInputType.manual,
-                      label: Text('Enter Manually'),
-                      icon: Icon(Icons.edit_location_alt_outlined)),
+                    value: LocationInputType.manual,
+                    label: Text('Enter Manually'),
+                    icon: Icon(Icons.edit_location_alt_outlined),
+                  ),
                 ],
                 selected: <LocationInputType>{_locationInputType},
-                onSelectionChanged: (Set<LocationInputType> newSelection) {
-                  final selection = newSelection.first;
-                  if (selection == LocationInputType.gps) {
-                    _handleGpsSelection(); // <-- Call our new method
-                  } else {
-                    setState(() {
-                      _locationInputType = LocationInputType.manual;
-                    });
-                  }
-                },
+                onSelectionChanged: (Set<LocationInputType> newSelection) =>
+                    setState(() => _locationInputType = newSelection.first),
               ),
               const SizedBox(height: 16),
-
+              if (_locationInputType == LocationInputType.map)
+                InteractiveMapPicker(
+                  // FIX for coordinates
+                  onLocationSelected: (coordinates) {
+                    setState(() {
+                      _selectedMapPoint = coordinates;
+                      // Use .lat and .lng instead of .y and .x
+                      _manualLatController.text =
+                          coordinates.coordinates.lat.toStringAsFixed(6);
+                      _manualLngController.text =
+                          coordinates.coordinates.lng.toStringAsFixed(6);
+                    });
+                  },
+                ),
               if (_locationInputType == LocationInputType.manual) ...[
                 TextFormField(
                   controller: _pastedCoordsController,
                   style: const TextStyle(color: Colors.white),
-                  decoration: _inputDecoration('Paste Coordinates String',
-                          isOptional: true)
-                      .copyWith(
-                          hintText: 'e.g., (37.8, -119.3) or 37.8, -119.3',
-                          suffixIcon: IconButton(
-                            tooltip: 'Paste from clipboard and parse',
-                            icon: const Icon(Icons.content_paste_go_outlined,
-                                color: Colors.white70),
-                            onPressed: () async {
-                              final clipboardData =
-                                  await Clipboard.getData(Clipboard.kTextPlain);
-                              if (clipboardData != null &&
-                                  clipboardData.text != null &&
-                                  clipboardData.text!.isNotEmpty) {
-                                _pastedCoordsController.text =
-                                    clipboardData.text!;
-                                _parseAndSetPastedCoordinates(
-                                    clipboardData.text!);
-                              } else {
-                                if (mounted)
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                        content: Text('Clipboard is empty.'),
-                                        backgroundColor: Colors.orange),
-                                  );
-                              }
-                            },
-                          )),
+                  decoration: _inputDecoration(
+                    'Paste Coordinates String',
+                    isOptional: true,
+                  ).copyWith(
+                    hintText: 'e.g., (37.8, -119.3)',
+                    suffixIcon: IconButton(
+                      tooltip: 'Paste & Parse',
+                      icon: const Icon(
+                        Icons.content_paste_go_outlined,
+                        color: Colors.white70,
+                      ),
+                      onPressed: () async {
+                        final data =
+                            await Clipboard.getData(Clipboard.kTextPlain);
+                        if (data?.text != null) {
+                          _pastedCoordsController.text = data!.text!;
+                          _parseAndSetPastedCoordinates(data!.text!);
+                        }
+                      },
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 12),
                 Row(
@@ -921,13 +825,15 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                             _inputDecoration('Latitude*', isOptional: false),
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true, signed: true),
-                        validator: (value) {
+                        validator: (v) {
                           if (_locationInputType == LocationInputType.manual) {
-                            if (value == null || value.trim().isEmpty)
+                            if (v == null || v.trim().isEmpty) {
                               return 'Enter latitude';
-                            final lat = double.tryParse(value.trim());
-                            if (lat == null || lat < -90 || lat > 90)
+                            }
+                            final lat = double.tryParse(v.trim());
+                            if (lat == null || lat < -90 || lat > 90) {
                               return 'Invalid (-90 to 90)';
+                            }
                           }
                           return null;
                         },
@@ -942,13 +848,15 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                             _inputDecoration('Longitude*', isOptional: false),
                         keyboardType: const TextInputType.numberWithOptions(
                             decimal: true, signed: true),
-                        validator: (value) {
+                        validator: (v) {
                           if (_locationInputType == LocationInputType.manual) {
-                            if (value == null || value.trim().isEmpty)
+                            if (v == null || v.trim().isEmpty) {
                               return 'Enter longitude';
-                            final lng = double.tryParse(value.trim());
-                            if (lng == null || lng < -180 || lng > 180)
+                            }
+                            final lng = double.tryParse(v.trim());
+                            if (lng == null || lng < -180 || lng > 180) {
                               return 'Invalid (-180 to 180)';
+                            }
                           }
                           return null;
                         },
@@ -956,53 +864,62 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
               ],
-
+              const SizedBox(height: 20),
               _buildSectionTitle("Additional Info"),
               TextFormField(
                 controller: _landmarkDescriptionController,
                 style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration(
-                    'Specific Landmark / Approach Directions',
-                    isOptional: true),
+                decoration:
+                    _inputDecoration('Approach Directions', isOptional: true),
                 maxLines: 3,
                 minLines: 1,
                 textCapitalization: TextCapitalization.sentences,
               ),
               const SizedBox(height: 16),
-
               TextFormField(
                 controller: _boulderDescriptionController,
                 style: const TextStyle(color: Colors.white),
-                decoration: _inputDecoration(
-                    'General Boulder Description (e.g., type of holds, style)',
-                    isOptional: true),
+                decoration:
+                    _inputDecoration('General Description', isOptional: true),
                 maxLines: 4,
                 minLines: 1,
                 textCapitalization: TextCapitalization.sentences,
               ),
               const SizedBox(height: 32),
+              // In your build method, inside the Column children:
 
               ElevatedButton.icon(
                 icon: _isLoading
-                    ? Container(
+                    ? const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5))
-                    : const Icon(Icons.publish_outlined, color: Colors.white),
-                label: Text(_isLoading ? 'Publishing...' : 'Publish Boulder',
-                    style: TextStyle(color: Colors.white)),
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.publish_outlined,
+                        color: Colors.white,
+                      ),
+                label: Text(
+                  _isLoading ? 'Publishing...' : 'Publish Boulder',
+                  style: const TextStyle(color: Colors.white),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.deepPurpleAccent,
                   padding:
                       const EdgeInsets.symmetric(vertical: 14, horizontal: 24),
                   textStyle: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold),
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
-                  minimumSize: const Size(double.infinity, 50),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  // FIX: Removed 'const' from the next line
+                  minimumSize: ui.Size(double.infinity, 50),
                 ),
                 onPressed: _isLoading ? null : _publishBoulder,
               ),
@@ -1014,98 +931,60 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
     );
   }
 
-  Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 8.0, bottom: 12.0),
-      child: Text(
-        title,
-        style: TextStyle(
+  Widget _buildSectionTitle(String title) => Padding(
+        padding: const EdgeInsets.only(top: 8.0, bottom: 12.0),
+        child: Text(
+          title,
+          style: TextStyle(
             color: Colors.white.withOpacity(0.9),
             fontSize: 18,
-            fontWeight: FontWeight.w600),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+
+  Widget _buildImageDisplayWidget() {
+    if (kIsWeb) {
+      if (_selectedImageBytes != null) {
+        return Image.memory(_selectedImageBytes!, fit: BoxFit.contain);
+      }
+      if (_selectedImageXFile != null) {
+        return Image.network(_selectedImageXFile!.path, fit: BoxFit.contain);
+      }
+    } else {
+      if (_selectedImageXFile != null) {
+        return Image.file(File(_selectedImageXFile!.path), fit: BoxFit.contain);
+      }
+    }
+    return const Center(
+      child: Text(
+        "No image to display.",
+        style: TextStyle(color: Colors.white54),
       ),
     );
   }
 
-  Widget _buildImageDisplayWidget() {
-    // Using a key that changes when the image content or source changes.
-    // Suffix helps differentiate if multiple aspects change.
-    String imageKeySuffix = _drawingResultData?['has_drawings']?.toString() ??
-        _selectedImageXFile?.name ?? // Use name as path can be long for web
-        _selectedImageBytes?.hashCode.toString() ??
-        DateTime.now().millisecondsSinceEpoch.toString();
-
-    if (kIsWeb) {
-      if (_selectedImageBytes != null) {
-        // WEB: Drawn image bytes are available, use Image.memory
-        return Image.memory(
-          _selectedImageBytes!,
-          fit: BoxFit.contain,
-          key: ValueKey(
-              'web_drawn_${_selectedImageBytes!.hashCode}_$imageKeySuffix'),
-          errorBuilder: (context, error, stackTrace) => Center(
-              child: Text("Error loading drawn web image",
-                  style: TextStyle(color: Colors.red[400]!))),
-        );
-      } else if (_selectedImageXFile != null) {
-        // WEB: No drawn image bytes yet (initial pick), use Image.network with original path
-        return Image.network(
-          _selectedImageXFile!.path,
-          fit: BoxFit.contain,
-          key: ValueKey(
-              'web_original_${_selectedImageXFile!.path}_$imageKeySuffix'),
-          errorBuilder: (context, error, stackTrace) => Center(
-              child: Text("Error loading web image: ${error.toString()}",
-                  style: TextStyle(color: Colors.red[400]!))),
-        );
-      }
-    } else {
-      // Native platforms
-      if (_selectedImageXFile != null) {
-        // NATIVE: _selectedImageXFile.path should point to the drawn image (temp file) or original.
-        // Image.file is used here.
-        return Image.file(
-          File(_selectedImageXFile!.path),
-          fit: BoxFit.contain,
-          key: ValueKey('native_${_selectedImageXFile!.path}_$imageKeySuffix'),
-          errorBuilder: (context, error, stackTrace) => Center(
-              child: Text("Error loading file image: ${error.toString()}",
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.red[400]!))),
-        );
-      }
-    }
-    // This should ideally not be reached if the parent logic correctly calls this method
-    // only when an image is supposed to be visible.
-    return const Center(
-        child: Text("No image to display.",
-            style: TextStyle(color: Colors.white54)));
-  }
-
   InputDecoration _inputDecoration(String label, {required bool isOptional}) {
-    String displayLabel = label;
-    if (isOptional && !label.toLowerCase().contains("(optional)")) {
-      displayLabel = label.replaceFirst(RegExp(r'\*$'), "") +
-          ' (Optional)'; // Remove trailing * if present
-    }
-
+    String displayLabel = isOptional
+        ? label.replaceFirst(RegExp(r'\*$'), "") + ' (Optional)'
+        : label;
     return InputDecoration(
       labelText: displayLabel,
       labelStyle: const TextStyle(color: Colors.white70),
-      hintText: isOptional && !label.toLowerCase().contains("paste")
-          ? 'Optional details'
-          : null,
       hintStyle: TextStyle(
-          color: Colors.grey.shade500,
-          fontSize: 14,
-          fontStyle: FontStyle.italic),
-      floatingLabelBehavior: FloatingLabelBehavior.auto,
+        color: Colors.grey.shade500,
+        fontSize: 14,
+        fontStyle: FontStyle.italic,
+      ),
       filled: true,
       fillColor: Colors.grey.shade800,
       contentPadding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: Colors.grey.shade700, width: 1),
+        borderSide: BorderSide(
+          color: Colors.grey.shade700,
+          width: 1,
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
@@ -1120,7 +999,10 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
         borderSide: const BorderSide(color: Colors.redAccent, width: 2),
       ),
       errorStyle: const TextStyle(
-          color: Colors.redAccent, fontWeight: FontWeight.w500, fontSize: 13),
+        color: Colors.redAccent,
+        fontWeight: FontWeight.w500,
+        fontSize: 13,
+      ),
     );
   }
 }

@@ -1,8 +1,12 @@
+import 'package:boulder_radar/widgets/boulder_location_map.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // Import shared_preferences
 import 'dart:convert'; // Required for jsonEncode and jsonDecode
+import 'dart:math'; // FIX: Added import for 'pi'
 
 class BoulderDetailPage extends StatefulWidget {
   // --- CONSTRUCTOR SIMPLIFIED ---
@@ -28,13 +32,20 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
   Map<String, dynamic>? _boulderData;
   String? _error;
   String? _currentUserId; // To store the current user's ID
+  OfflineManager? _offlineManager;
 
   @override
   void initState() {
     super.initState();
     _currentUserId = _supabase.auth.currentUser?.id; // Get current user ID
     _fetchBoulderDetails();
+    _initOfflineManager();
+
     _checkIfSaved(); // Check saved status on init
+  }
+
+  void _initOfflineManager() async {
+    _offlineManager = await OfflineManager.create();
   }
 
   Future<void> _checkIfSaved() async {
@@ -53,50 +64,162 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
 
   // Use this clean _saveBoulderForOffline function.
 // And ensure the back button in your AppBar is just a simple Navigator.of(context).pop().
+  Future<void> _toggleSaveState() async {
+    if (_isSaving) return;
+
+    setState(() => _isSaving = true);
+
+    if (_isSaved) {
+      await _unsaveBoulder();
+    } else {
+      await _saveBoulderForOffline();
+    }
+
+    if (mounted) {
+      setState(() => _isSaving = false);
+    }
+  }
 
   Future<void> _saveBoulderForOffline() async {
     if (_boulderData == null) return;
-    setState(() => _isSaving = true);
-
     try {
       final prefs = await SharedPreferences.getInstance();
-      final List<String> savedBoulders =
-          prefs.getStringList('saved_boulders') ?? [];
+      List<String> savedBoulders = prefs.getStringList('saved_boulders') ?? [];
+      final dataToSave = Map<String, dynamic>.from(_boulderData!);
 
-      // The data from the RPC now contains everything we need. No need to add it manually.
-      final Map<String, dynamic> dataToSave = Map.from(_boulderData!);
-
-      // Remove any old version of this boulder before adding the new one
       savedBoulders
           .removeWhere((b) => (jsonDecode(b) as Map)['id'] == dataToSave['id']);
       savedBoulders.add(jsonEncode(dataToSave));
-
       await prefs.setStringList('saved_boulders', savedBoulders);
+
+      final imagesList = _boulderData!['images'] as List<dynamic>?;
+      if (imagesList != null && imagesList.isNotEmpty) {
+        final imageUrl =
+            (imagesList[0] as Map<String, dynamic>?)?['url'] as String?;
+        if (imageUrl != null) {
+          await DefaultCacheManager().downloadFile(imageUrl);
+        }
+      }
+
+      final location = _boulderData!['location'] as Map<String, dynamic>?;
+      final coords = location?['coordinates'] as List<dynamic>?;
+      if (coords != null && coords.length == 2) {
+        final lon = coords[0] as double;
+        final lat = coords[1] as double;
+        await _downloadOfflineRegion(lon, lat, widget.boulderId);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('Boulder saved for offline use.'),
+              content: Text('Boulder and map area saved for offline use.'),
               backgroundColor: Colors.green),
         );
-        setState(() {
-          _isSaved = true;
-          _isSaving = false;
-        });
+        setState(() => _isSaved = true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Failed to save boulder: ${e.toString()}'),
+              content: Text('Failed to save for offline: ${e.toString()}'),
               backgroundColor: Colors.red),
         );
       }
-    } finally {
-      if (mounted && _isSaving) {
-        setState(() => _isSaving = false);
+    }
+  }
+
+  // lib/boulder_detail_page.dart
+
+  // FIX: This function now correctly gets the TileStore instance
+  Future<void> _unsaveBoulder() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      List<String> savedBoulders = prefs.getStringList('saved_boulders') ?? [];
+      savedBoulders
+          .removeWhere((b) => (jsonDecode(b) as Map)['id'] == widget.boulderId);
+      await prefs.setStringList('saved_boulders', savedBoulders);
+
+      // Use await TileStore.createDefault()
+      final tileStore = await TileStore.createDefault();
+      await tileStore.removeRegion(widget.boulderId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('Removed from offline storage.'),
+              backgroundColor: Colors.orange),
+        );
+        setState(() => _isSaved = false);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('Failed to unsave: ${e.toString()}'),
+              backgroundColor: Colors.red),
+        );
       }
     }
+  }
+
+  // FIX: This function now correctly gets the TileStore and calls loadTileRegion
+  Future<void> _downloadOfflineRegion(
+      double lon, double lat, String boulderId) async {
+    // Use await TileStore.createDefault()
+    final tileStore = await TileStore.createDefault();
+
+    var latRad = lat * pi / 180.0;
+    var lonRad = lon * pi / 180.0;
+    const radiusKm = 10.0;
+    const earthRadiusKm = 6371.0;
+    var dLat = radiusKm / earthRadiusKm;
+    var dLon = radiusKm / (earthRadiusKm * cos(latRad));
+
+    final minLat = (latRad - dLat) * 180.0 / pi;
+    final maxLat = (latRad + dLat) * 180.0 / pi;
+    final minLon = (lonRad - dLon) * 180.0 / pi;
+    final maxLon = (lonRad + dLon) * 180.0 / pi;
+
+    final bounds = CoordinateBounds(
+      southwest: Point(coordinates: Position(minLon, minLat)),
+      northeast: Point(coordinates: Position(maxLon, maxLat)),
+      infiniteBounds: false,
+    );
+
+    final tilesetDescriptor = TilesetDescriptorOptions(
+      styleURI: MapboxStyles.SATELLITE_STREETS,
+      minZoom: 10,
+      maxZoom: 16,
+    );
+
+    final options = TileRegionLoadOptions(
+      geometry: Polygon(coordinates: [
+        [
+          bounds.southwest.coordinates,
+          Position(bounds.northeast.coordinates.lng,
+              bounds.southwest.coordinates.lat),
+          bounds.northeast.coordinates,
+          Position(bounds.southwest.coordinates.lng,
+              bounds.northeast.coordinates.lat),
+          bounds.southwest.coordinates,
+        ]
+      ]).toJson(),
+      descriptorsOptions: [tilesetDescriptor],
+      acceptExpired: false,
+      networkRestriction: NetworkRestriction.NONE,
+      metadata: {'boulderId': boulderId, 'name': 'BoulderRegion'},
+    );
+
+    // Pass the progress listener directly as the third argument.
+    await tileStore.loadTileRegion(
+      boulderId,
+      options,
+      (progress) {
+        // You can use this to update the UI, for example.
+        print(
+            'Download progress: ${progress.completedResourceCount} / ${progress.requiredResourceCount}');
+      },
+    );
   }
 
   Future<void> _fetchBoulderDetails() async {
@@ -505,6 +628,31 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
             ),
             const SizedBox(height: 16),
 
+            _buildSectionTitle('Location Map'),
+            const SizedBox(height: 4),
+            if (latitude != null && longitude != null)
+              BoulderLocationMap(
+                boulderLatitude: double.parse(latitude),
+                boulderLongitude: double.parse(longitude),
+              )
+            else
+              Container(
+                height: 150,
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade800,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Center(
+                  child: Text(
+                    'Location not available',
+                    style: TextStyle(color: Colors.white60),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 20),
+
+            // In your build method's Column, use this button code
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -515,8 +663,8 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                         child: CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2.0))
                     : Icon(_isSaved
-                        ? Icons.check_circle
-                        : Icons.save_alt_outlined),
+                        ? Icons.cloud_done_outlined
+                        : Icons.cloud_download_outlined),
                 label:
                     Text(_isSaved ? 'Saved Offline' : 'Save for Offline Use'),
                 style: ElevatedButton.styleFrom(
@@ -527,8 +675,9 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8)),
                 ),
-                onPressed:
-                    _isSaving || _isSaved ? null : _saveBoulderForOffline,
+                onPressed: _isSaving
+                    ? null
+                    : _toggleSaveState, // Use the toggle function
               ),
             ),
             const SizedBox(height: 30), // Bottom padding
