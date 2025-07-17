@@ -49,9 +49,6 @@ class _ZonesPageState extends State<ZonesPage> {
     }
   }
     
-  // --- NEW: Refresh handler ---
-  // This function is called by the RefreshIndicator.
-  // It re-runs the fetch logic and updates the state.
   Future<void> _handleRefresh() async {
     setState(() {
       _zonesFuture = _fetchZones();
@@ -84,7 +81,6 @@ class _ZonesPageState extends State<ZonesPage> {
     return Scaffold(
       backgroundColor: Colors.grey.shade900,
       appBar: AppBar(
-        // --- MODIFIED: Renamed the app ---
         title: const Text(
           'Boulderly',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
@@ -142,27 +138,22 @@ class _ZonesPageState extends State<ZonesPage> {
                     ),
                   );
                 }
-                // --- MODIFIED: Added RefreshIndicator ---
                 return RefreshIndicator(
                   onRefresh: _handleRefresh,
                   color: Colors.white,
                   backgroundColor: Colors.grey.shade800,
                   child: SingleChildScrollView(
-                    // physics is important for the indicator to work correctly
                     physics: const AlwaysScrollableScrollPhysics(),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         const SizedBox(height: 20),
-                        // --- MODIFIED: Image styling for full-width ---
+
                         Image.asset(
-                          'assets/images/Climbing-pana_1.png',
-                          height: 200,
-                          width: double.infinity, // Stretches to fill width
-                          fit: BoxFit.cover,      // Covers the area without distortion
+                          'assets/images/boulderly_image.png', // <-- New image path
+                          height: 200, // You can adjust this height if needed
                         ),
                         const SizedBox(height: 24),
-                        // --- MODIFIED: Wrapped text/grid in Padding ---
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16.0),
                           child: Column(

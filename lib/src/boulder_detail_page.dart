@@ -3,15 +3,15 @@ import 'package:boulder_radar/widgets/boulder_location_map.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // Import shared_preferences
 import 'dart:convert'; // Required for jsonEncode and jsonDecode
-import 'dart:math'; // FIX: Added import for 'pi'
+import 'dart:math';
 
 class BoulderDetailPage extends StatefulWidget {
-  // --- CONSTRUCTOR SIMPLIFIED ---
   final String boulderId;
 
   const BoulderDetailPage({
@@ -62,10 +62,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     }
   }
 
-  // REPLACE your entire _saveBoulderForOffline function with this one.
-
-  // Use this clean _saveBoulderForOffline function.
-// And ensure the back button in your AppBar is just a simple Navigator.of(context).pop().
   Future<void> _toggleSaveState() async {
     if (_isSaving) return;
 
@@ -89,10 +85,31 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
       List<String> savedBoulders = prefs.getStringList('saved_boulders') ?? [];
       final dataToSave = Map<String, dynamic>.from(_boulderData!);
 
+
+      final location = _boulderData!['location'] as Map<String, dynamic>?;
+      final coords = location?['coordinates'] as List<dynamic>?;
+
+      if (coords != null && coords.length == 2) {
+        final lon = coords[0] as double;
+        final lat = coords[1] as double;
+        final accessToken = dotenv.get('MAPBOX_ACCESS_TOKEN');
+
+        final staticMapUrl =
+            'https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/'
+            'pin-s($lon,$lat)/'
+            '$lon,$lat,14,0/600x400?access_token=$accessToken';
+
+        dataToSave['static_map_url'] = staticMapUrl;
+
+        await DefaultCacheManager().downloadFile(staticMapUrl);
+      }
+
+
       savedBoulders
           .removeWhere((b) => (jsonDecode(b) as Map)['id'] == dataToSave['id']);
       savedBoulders.add(jsonEncode(dataToSave));
       await prefs.setStringList('saved_boulders', savedBoulders);
+
 
       final imagesList = _boulderData!['images'] as List<dynamic>?;
       if (imagesList != null && imagesList.isNotEmpty) {
@@ -103,8 +120,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
         }
       }
 
-      final location = _boulderData!['location'] as Map<String, dynamic>?;
-      final coords = location?['coordinates'] as List<dynamic>?;
       if (coords != null && coords.length == 2) {
         final lon = coords[0] as double;
         final lat = coords[1] as double;
@@ -130,9 +145,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     }
   }
 
-  // lib/boulder_detail_page.dart
-
-  // FIX: This function now correctly gets the TileStore instance
   Future<void> _unsaveBoulder() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -141,7 +153,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
           .removeWhere((b) => (jsonDecode(b) as Map)['id'] == widget.boulderId);
       await prefs.setStringList('saved_boulders', savedBoulders);
 
-      // Use await TileStore.createDefault()
       final tileStore = await TileStore.createDefault();
       await tileStore.removeRegion(widget.boulderId);
 
@@ -164,10 +175,8 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     }
   }
 
-  // FIX: This function now correctly gets the TileStore and calls loadTileRegion
   Future<void> _downloadOfflineRegion(
       double lon, double lat, String boulderId) async {
-    // Use await TileStore.createDefault()
     final tileStore = await TileStore.createDefault();
 
     var latRad = lat * pi / 180.0;
@@ -212,12 +221,10 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
       metadata: {'boulderId': boulderId, 'name': 'BoulderRegion'},
     );
 
-    // Pass the progress listener directly as the third argument.
     await tileStore.loadTileRegion(
       boulderId,
       options,
       (progress) {
-        // You can use this to update the UI, for example.
         print(
             'Download progress: ${progress.completedResourceCount} / ${progress.requiredResourceCount}');
       },
@@ -232,7 +239,7 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     });
     try {
       final response = await _supabase.functions.invoke(
-        'get-boulder-details', // Your new Edge Function name
+        'get-boulder-details',
         body: {'bid': widget.boulderId},
       );
 
@@ -267,14 +274,13 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     setState(() => _isDeleting = true);
     try {
       await _supabase.from('boulders').delete().eq('id', id);
-      // If no exception, it's successful.
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
             content: Text('"$name" deleted successfully.'),
             backgroundColor: Colors.green),
       );
-      Navigator.of(context).pop(true); // Pop with success
+      Navigator.of(context).pop(true);
     } on PostgrestException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -382,7 +388,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
       primaryImageUrl = null;
     }
 
-// Landmarks - same approach
     final landmarksList = _boulderData!['landmarks'] as List<dynamic>?;
     String landmarkDescription;
     if (landmarksList != null && landmarksList.isNotEmpty) {
@@ -392,7 +397,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
       landmarkDescription = '';
     }
 
-    // Determine if the current user can delete this boulder
     final bool canDelete =
         (_currentUserId != null && uploadedBy == _currentUserId);
 
@@ -461,17 +465,13 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                 borderRadius: BorderRadius.circular(12.0),
                 child: Image.network(
                   primaryImageUrl,
-                  fit: BoxFit
-                      .contain, // Changed from BoxFit.cover to BoxFit.contain
+                  fit: BoxFit.contain,
                   width: double.infinity,
-                  // Removed fixed height to allow image to determine its aspect ratio within bounds
-                  // height: 250,
                   loadingBuilder: (BuildContext context, Widget child,
                       ImageChunkEvent? loadingProgress) {
                     if (loadingProgress == null) return child;
-                    // Maintain a placeholder aspect ratio or min height during loading if desired
                     return AspectRatio(
-                      aspectRatio: 16 / 9, // Or another common aspect ratio
+                      aspectRatio: 16 / 9,
                       child: Container(
                         color: Colors.grey.shade800,
                         child: Center(
@@ -509,11 +509,8 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
               )
             else
               AspectRatio(
-                // Use AspectRatio for placeholder as well
                 aspectRatio: 16 / 9,
                 child: Container(
-                  // Placeholder if no image
-                  // height: 250,
                   width: double.infinity,
                   decoration: BoxDecoration(
                     color: Colors.grey.shade800,
@@ -533,8 +530,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                   ),
                 ),
               ),
-
-            // const SizedBox(height: 20),
 
             const SizedBox(height: 24),
 
@@ -583,7 +578,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                 Expanded(
                   child: Text(
                     (latitude != null && longitude != null)
-                        // Parse string to double for display formatting
                         ? 'Lat: ${double.tryParse(latitude)?.toStringAsFixed(6) ?? latitude}, Lng: ${double.tryParse(longitude)?.toStringAsFixed(6) ?? longitude}'
                         : 'Coordinates not available.',
                     style: Theme.of(context)
@@ -592,7 +586,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                         ?.copyWith(color: Colors.white.withOpacity(0.8)),
                   ),
                 ),
-                // Only show the copy button if coordinates exist
                 if (latitude != null && longitude != null)
                   IconButton(
                     icon: Icon(
@@ -602,7 +595,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                     ),
                     tooltip: 'Copy Coordinates',
                     onPressed: () {
-                      // The original, full-precision strings are used for copying
                       final String coordinatesToCopy = '$latitude,$longitude';
                       Clipboard.setData(ClipboardData(text: coordinatesToCopy))
                           .then((_) {
@@ -675,7 +667,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
               ),
             const SizedBox(height: 20),
 
-            // In your build method's Column, use this button code
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
@@ -735,8 +726,8 @@ class _MapPreview extends StatelessWidget {
     required this.onTap,
   });
 
-  static const String _mapboxAccessToken =
-      '';
+  static final String _mapboxAccessToken = dotenv.get('MAPBOX_ACCESS_TOKEN',
+      fallback: 'YOUR_MAPBOX_ACCESS_TOKEN_HERE');
 
   @override
   Widget build(BuildContext context) {
@@ -770,7 +761,6 @@ class _MapPreview extends StatelessWidget {
                   );
                 },
                 errorBuilder: (context, error, stackTrace) {
-                  // This will help you see the exact error in your debug console.
                   print('--- MAP PREVIEW FAILED TO LOAD ---');
                   print('Error: $error');
                   print('URL: $staticMapUrl');
@@ -791,7 +781,6 @@ class _MapPreview extends StatelessWidget {
                   );
                 },
               ),
-              // This overlay for tapping is unchanged and should work fine.
               Container(
                 decoration: BoxDecoration(
                   color: Colors.black.withOpacity(0.4),

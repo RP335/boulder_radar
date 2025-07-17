@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:cached_network_image/cached_network_image.dart';
 
 class BoulderDetailPageOffline extends StatelessWidget {
   final Map<String, dynamic> boulderData;
@@ -42,6 +43,9 @@ class BoulderDetailPageOffline extends StatelessWidget {
         : null;
 
     final imagesList = boulderData['images'] as List<dynamic>?;
+
+    final staticMapUrl = boulderData['static_map_url'] as String?;
+
     String? primaryImageUrl;
     if (imagesList != null && imagesList.isNotEmpty) {
       final firstImage = imagesList[0] as Map<String, dynamic>?;
@@ -170,7 +174,6 @@ class BoulderDetailPageOffline extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // REPLACE WITH THIS BLOCK
             _buildSectionTitle(context, 'Coordinates'),
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -240,9 +243,9 @@ class BoulderDetailPageOffline extends StatelessWidget {
             _buildSectionTitle(context, 'Location Map'),
             const SizedBox(height: 4),
 
-            // MODIFIED: Replaced direct map with a tappable preview
             if (latitude != null && longitude != null)
               _MapPreviewOffline(
+                staticMapUrl: staticMapUrl,
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
@@ -290,49 +293,57 @@ class BoulderDetailPageOffline extends StatelessWidget {
   }
 }
 
-// NEW WIDGET: A static, tappable preview for the offline map.
 class _MapPreviewOffline extends StatelessWidget {
   final VoidCallback onTap;
+  final String? staticMapUrl; 
 
-  const _MapPreviewOffline({required this.onTap});
+  const _MapPreviewOffline({required this.onTap, this.staticMapUrl});
 
   @override
   Widget build(BuildContext context) {
+    final fallbackWidget = Container(
+      decoration: BoxDecoration(
+        color: Colors.grey.shade800,
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.fullscreen,
+                color: Colors.white.withOpacity(0.9), size: 40),
+            const SizedBox(height: 8),
+            Text(
+              'Tap to view offline map',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.9),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
     return GestureDetector(
       onTap: onTap,
       child: AspectRatio(
         aspectRatio: 16 / 10,
         child: ClipRRect(
           borderRadius: BorderRadius.circular(12.0),
-          child: Container(
-            decoration: BoxDecoration(
-              color: Colors.grey.shade800,
-            ),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.fullscreen,
-                      color: Colors.white.withOpacity(0.9), size: 40),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap to view offline map',
-                    style: TextStyle(
-                      color: Colors.white.withOpacity(0.9),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
+          child: (staticMapUrl != null && staticMapUrl!.isNotEmpty)
+              ? CachedNetworkImage(
+                  imageUrl: staticMapUrl!,
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => fallbackWidget,
+                  errorWidget: (context, url, error) => fallbackWidget,
+                )
+              : fallbackWidget,
         ),
       ),
     );
   }
 }
 
-// NEW PAGE: A full-screen page to host the offline map widget.
 class FullScreenMapPageOffline extends StatelessWidget {
   final double latitude;
   final double longitude;

@@ -137,15 +137,14 @@ class _DrawingPageState extends State<DrawingPage> {
     });
   }
 
-  /// Renders the background image and all drawn lines onto a new canvas
-  /// and returns the result to the previous page.
+
   Future<void> _saveAndReturnDrawing() async {
     if (_backgroundImage == null) {
       Navigator.of(context).pop();
       return;
     }
 
-    // 1. Create a recorder and a canvas with the image's exact dimensions.
+
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(
       recorder,
@@ -153,11 +152,9 @@ class _DrawingPageState extends State<DrawingPage> {
           _backgroundImage!.height.toDouble()),
     );
 
-    // 2. Draw the original image.
+
     canvas.drawImage(_backgroundImage!, Offset.zero, Paint());
 
-    // 3. Draw all the lines on top. The line coordinates are already
-    //    in the correct image-space, so no conversion is needed.
     for (final line in _lines) {
       final paint = Paint()
         ..color = line.color
@@ -175,26 +172,24 @@ class _DrawingPageState extends State<DrawingPage> {
       }
     }
 
-    // 4. Convert the canvas to a final image.
+
     final ui.Image finalImage = await recorder.endRecording().toImage(
           _backgroundImage!.width,
           _backgroundImage!.height,
         );
 
-    // 5. Convert the image to PNG bytes.
+
     final byteData =
         await finalImage.toByteData(format: ui.ImageByteFormat.png);
     if (byteData == null) return;
     final Uint8List pngBytes = byteData.buffer.asUint8List();
 
-    // 6. Prepare the result map to pop from the navigator.
     final Map<String, dynamic> result = {
       'updatedImageBytes': pngBytes,
       'has_drawings': _lines.isNotEmpty,
       'drawing_data': null, // Placeholder for future use
     };
 
-    // 7. Pop with the correct data for web or native.
     if (!mounted) return;
     if (kIsWeb) {
       Navigator.of(context).pop(result..addAll({'updatedImagePath': null}));
@@ -332,7 +327,7 @@ class _DrawingPageState extends State<DrawingPage> {
     );
   }
 
-  /// Builds a single circular color selection button.
+
   Widget _buildColorButton(Color color) {
     bool isSelected = _selectedColor == color;
     return GestureDetector(
@@ -365,8 +360,7 @@ class DrawingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. Draw the background image at the top-left corner. It will fill
-    //    the canvas since the canvas size is identical to the image size.
+
     canvas.drawImage(backgroundImage, Offset.zero, Paint());
 
     // 2. Draw all the previously completed lines.

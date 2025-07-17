@@ -35,7 +35,6 @@ class AddBoulderPage extends StatefulWidget {
 }
 
 class _AddBoulderPageState extends State<AddBoulderPage> {
-  static const String _mapboxAccessToken = '';
   final _formKey = GlobalKey<FormState>();
   final SupabaseClient _supabase = Supabase.instance.client;
 
@@ -659,6 +658,10 @@ class _AddBoulderPageState extends State<AddBoulderPage> {
   }
 }
 
+// [IMPORTS AND BOILERPLATE AT THE TOP OF THE FILE REMAIN THE SAME]
+// ...
+// ... previous code from AddBoulderPage ...
+
 class _MapPickerPreview extends StatefulWidget {
   final Point? selectedPoint;
   final VoidCallback onTap;
@@ -674,6 +677,8 @@ class _MapPickerPreviewState extends State<_MapPickerPreview> {
   PointAnnotation? _annotation;
   PointAnnotationManager? _annotationManager;
   Uint8List? _markerImage;
+  // MODIFIED: Added a loading state for the preview
+  bool _isLoadingPreview = true;
 
   @override
   void initState() {
@@ -687,6 +692,7 @@ class _MapPickerPreviewState extends State<_MapPickerPreview> {
   void didUpdateWidget(covariant _MapPickerPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.selectedPoint != oldWidget.selectedPoint) {
+      // MODIFIED: Simplified this to just update the marker
       _updateCameraAndMarker();
     }
   }
@@ -694,25 +700,67 @@ class _MapPickerPreviewState extends State<_MapPickerPreview> {
   Future<void> _onMapCreated(MapboxMap controller) async {
     _mapController = controller;
     _annotationManager = await _mapController?.annotations.createPointAnnotationManager();
-    _updateCameraAndMarker();
+    // MODIFIED: This now intelligently centers the map
+    await _centerMapInitially();
+  }
+
+  // NEW: This logic centers the map on the user or the selected point.
+  Future<void> _centerMapInitially() async {
+    if (_mapController == null || !mounted) return;
+
+    Point? targetPoint = widget.selectedPoint;
+    double targetZoom = 15.0;
+
+    // If no point is selected, fetch the user's current location
+    if (targetPoint == null) {
+      try {
+        final permission = await geo.Geolocator.checkPermission();
+        if (permission == geo.LocationPermission.denied || permission == geo.LocationPermission.deniedForever) {
+          // If no permission, we'll just default to a wide view.
+          targetPoint = Point(coordinates: Position(0, 0));
+          targetZoom = 1.0;
+        } else {
+          final pos = await geo.Geolocator.getCurrentPosition(desiredAccuracy: geo.LocationAccuracy.high);
+          targetPoint = Point(coordinates: Position(pos.longitude, pos.latitude));
+          targetZoom = 14.0;
+        }
+      } catch (e) {
+        print("Could not get user location for preview: $e");
+        targetPoint = Point(coordinates: Position(0, 0));
+        targetZoom = 1.0;
+      }
+    }
+
+    _mapController?.flyTo(CameraOptions(center: targetPoint, zoom: targetZoom), MapAnimationOptions(duration: 800));
+    _updateCameraAndMarker(); // Update marker after centering
+
+    if (mounted) {
+      setState(() => _isLoadingPreview = false);
+    }
   }
 
   void _updateCameraAndMarker() async {
-    if (_mapController == null || !mounted) return;
-    if (widget.selectedPoint != null) {
+    if (_mapController == null || !mounted || widget.selectedPoint == null) return;
+    
+    // Only fly the camera if the new point is different from the current center
+    final currentCamera = await _mapController!.getCameraState();
+    if (currentCamera.center.coordinates.lat != widget.selectedPoint!.coordinates.lat ||
+        currentCamera.center.coordinates.lng != widget.selectedPoint!.coordinates.lng) {
       _mapController?.flyTo(CameraOptions(center: widget.selectedPoint, zoom: 15), MapAnimationOptions(duration: 600));
-      if (_markerImage != null) {
-        if (_annotation == null) {
-          _annotation = await _annotationManager?.create(PointAnnotationOptions(geometry: widget.selectedPoint!, image: _markerImage!));
-        } else {
-          _annotation!.geometry = widget.selectedPoint!;
-          _annotationManager?.update(_annotation!);
-        }
+    }
+    
+    if (_markerImage != null) {
+      if (_annotation == null) {
+        _annotationManager?.create(PointAnnotationOptions(geometry: widget.selectedPoint!, image: _markerImage!)).then((newAnnotation) {
+          if (mounted) _annotation = newAnnotation;
+        });
+      } else {
+        _annotation!.geometry = widget.selectedPoint!;
+        _annotationManager?.update(_annotation!);
       }
-    } else {
-      _mapController?.flyTo(CameraOptions(center: Point(coordinates: Position(0, 0)), zoom: 1), MapAnimationOptions(duration: 1));
     }
   }
+
 
   Future<Uint8List> _createMarkerImage() async {
     final ui.PictureRecorder recorder = ui.PictureRecorder();
@@ -741,21 +789,33 @@ class _MapPickerPreviewState extends State<_MapPickerPreview> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                MapWidget(onMapCreated: _onMapCreated, styleUri: MapboxStyles.SATELLITE_STREETS),
-                AbsorbPointer(child: Container(color: Colors.transparent)),
-                Container(
-                  decoration: BoxDecoration(color: Colors.black.withOpacity(0.5)),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.touch_app, color: Colors.white, size: 40),
-                        const SizedBox(height: 8),
-                        Text(
-                          widget.selectedPoint == null ? 'Tap to Select Location' : 'Tap to Change Location',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                        ),
-                      ],
+                MapWidget(onMapCreated: _onMapCreated, styleUri: MapboxStyles.MAPBOX_STREETS),
+                // Show a loading indicator until the map is centered
+                if (_isLoadingPreview)
+                  Container(
+                    color: Colors.black.withOpacity(0.6),
+                    child: const Center(child: CircularProgressIndicator(color: Colors.white)),
+                  ),
+                // Keep the tap hint overlay
+                AbsorbPointer(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: _isLoadingPreview ? Colors.transparent : Colors.black.withOpacity(0.5),
+                    ),
+                    child: Center(
+                      child: _isLoadingPreview
+                          ? const SizedBox.shrink()
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const Icon(Icons.touch_app, color: Colors.white, size: 40),
+                                const SizedBox(height: 8),
+                                Text(
+                                  widget.selectedPoint == null ? 'Tap to Select Location' : 'Tap to Change Location',
+                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
                     ),
                   ),
                 ),

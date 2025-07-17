@@ -1,4 +1,3 @@
-// lib/widgets/interactive_map_picker.dart
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -23,17 +22,50 @@ class _InteractiveMapPickerState extends State<InteractiveMapPicker> {
   MapboxMap? _mapboxMap;
   PointAnnotation? _pointAnnotation;
   PointAnnotationManager? _pointAnnotationManager;
-  String _currentMapStyle = MapboxStyles.SATELLITE_STREETS;
+  String _currentMapStyle = MapboxStyles.MAPBOX_STREETS;
   Uint8List? _cachedMarkerImage;
+
+  bool _isInitializing = true;
+  Point? _initialCameraCenter;
 
   @override
   void initState() {
     super.initState();
-    _createMarkerImage().then((image) {
-      if (mounted) {
-        setState(() => _cachedMarkerImage = image);
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await _determineInitialCenter();
+    _cachedMarkerImage = await _createMarkerImage();
+    
+    if (mounted) {
+      setState(() {
+        _isInitializing = false;
+      });
+    }
+  }
+
+  Future<void> _determineInitialCenter() async {
+    if (widget.initialPoint != null) {
+      _initialCameraCenter = widget.initialPoint;
+      return;
+    }
+
+    try {
+      final permission = await geo.Geolocator.checkPermission();
+      if (permission == geo.LocationPermission.denied || permission == geo.LocationPermission.deniedForever) {
+        _initialCameraCenter = Point(coordinates: Position(0, 0));
+        return;
       }
-    });
+      
+      final pos = await geo.Geolocator.getCurrentPosition(desiredAccuracy: geo.LocationAccuracy.high);
+      if (mounted) {
+         _initialCameraCenter = Point(coordinates: Position(pos.longitude, pos.latitude));
+      }
+    } catch (e) {
+      debugPrint('Could not get user location for picker: $e');
+      _initialCameraCenter = Point(coordinates: Position(0, 0));
+    }
   }
 
   Future<Uint8List> _createMarkerImage() async {
@@ -60,49 +92,29 @@ class _InteractiveMapPickerState extends State<InteractiveMapPicker> {
       pitchEnabled: true,
     ));
 
-    // THE FIX: This code enables the user location puck (the blue dot).
     _mapboxMap?.location.updateSettings(LocationComponentSettings(
       enabled: true,
       pulsingEnabled: true,
     ));
 
+    // --- MODIFIED: Set the camera position here ---
+    // This happens instantly when the map is ready, avoiding any visible pan.
+    if (_initialCameraCenter != null) {
+      mapboxMap.setCamera(
+        CameraOptions(
+          center: _initialCameraCenter,
+          zoom: _initialCameraCenter!.coordinates.lat == 0 && _initialCameraCenter!.coordinates.lng == 0 ? 1.0 : 14.0,
+        ),
+      );
+    }
+    
     _pointAnnotationManager =
         await _mapboxMap?.annotations.createPointAnnotationManager();
 
     if (widget.initialPoint != null) {
       _updateMarker(widget.initialPoint!);
-      await _mapboxMap?.flyTo(
-        CameraOptions(center: widget.initialPoint, zoom: 16.0),
-        MapAnimationOptions(duration: 1200),
-      );
-    } else {
-      await _centerMapOnUser();
     }
   }
-
-  Future<void> _centerMapOnUser() async {
-    try {
-      var permission = await geo.Geolocator.checkPermission();
-      if (permission == geo.LocationPermission.denied) {
-        permission = await geo.Geolocator.requestPermission();
-      }
-      if (permission == geo.LocationPermission.denied ||
-          permission == geo.LocationPermission.deniedForever) return;
-
-      final pos = await geo.Geolocator.getCurrentPosition(
-          desiredAccuracy: geo.LocationAccuracy.high);
-      await _mapboxMap?.flyTo(
-        CameraOptions(
-            center: Point(coordinates: Position(pos.longitude, pos.latitude)),
-            zoom: 14.0),
-        MapAnimationOptions(duration: 1500),
-      );
-    } catch (e) {
-      debugPrint('Could not center on user: $e');
-    }
-  }
-
-// NEW, CORRECTED CODE
 
   void _handleMapTap(MapContentGestureContext context) {
     final Point tappedPoint = context.point;
@@ -125,7 +137,6 @@ class _InteractiveMapPickerState extends State<InteractiveMapPicker> {
       final annotation = await _pointAnnotationManager?.create(options);
       if (mounted) setState(() => _pointAnnotation = annotation);
     }
-    // This call is what enables the "Confirm" button.
     widget.onLocationSelected(point);
   }
 
@@ -141,9 +152,29 @@ class _InteractiveMapPickerState extends State<InteractiveMapPicker> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isInitializing || _initialCameraCenter == null) {
+      return const Scaffold(
+        backgroundColor: Color(0xFF121212),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Colors.white),
+              SizedBox(height: 20),
+              Text("Finding your location...", style: TextStyle(color: Colors.white70, fontSize: 16)),
+            ],
+          )
+        ),
+      );
+    }
+
     return Stack(
       children: [
         MapWidget(
+          // --- MODIFIED: Removed the incorrect 'cameraOptions' and added the required 'pixelRatio' ---
+          mapOptions: MapOptions(
+            pixelRatio: MediaQuery.of(context).devicePixelRatio,
+          ),
           onMapCreated: _onMapCreated,
           onTapListener: _handleMapTap,
           styleUri: '$_currentMapStyle?optimize=true',
@@ -157,7 +188,7 @@ class _InteractiveMapPickerState extends State<InteractiveMapPicker> {
             onPressed: _toggleMapStyle,
             tooltip: 'Toggle Map Style',
             child: Icon(
-              _currentMapStyle == MapboxStyles.SATELLITE_STREETS
+              _currentMapStyle == MapboxStyles.MAPBOX_STREETS
                   ? Icons.map_outlined
                   : Icons.satellite_alt_outlined,
               color: Colors.white,

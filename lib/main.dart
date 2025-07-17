@@ -1,28 +1,30 @@
 // lib/main.dart
-import 'dart:async'; // 👈 Make sure to import this for StreamSubscription
+import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'src/create_account_page.dart'; // Assuming your pages are here now
+import 'src/create_account_page.dart'; 
 import 'src/zones_page.dart';
-import 'services/upload_service.dart'; // <-- ADD THIS LINE
+import 'services/upload_service.dart'; 
 
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
-const _supabaseUrl = '';
-
-const _supabaseKey =
-    '';
 
 Future<void> main() async {
   try {
     WidgetsFlutterBinding.ensureInitialized();
 
-    // 1. Initialize Supabase FIRST, as other services depend on it.
+        await dotenv.load(fileName: ".env");
+
+    final supabaseUrl = dotenv.get('SUPABASE_URL');
+    final supabaseKey = dotenv.get('SUPABASE_KEY');
+    final mapboxAccessToken = dotenv.get('MAPBOX_ACCESS_TOKEN');
+
     await Supabase.initialize(
-      url: _supabaseUrl,
-      anonKey: _supabaseKey,
+      url: supabaseUrl,
+      anonKey: supabaseKey,
     );
 
     // 2. Initialize Hive for local storage.
@@ -30,18 +32,15 @@ Future<void> main() async {
     Hive.registerAdapter(PendingUploadAdapter());
     await Hive.openBox<PendingUpload>('upload_queue');
 
-    // 3. Initialize your UploadService, which can now safely use the Supabase client.
     UploadService.instance.init();
 
-    // 4. Set up other services like Mapbox.
 
-    MapboxOptions.setAccessToken(
-        '');
-    // 5. Run the app.
+    MapboxOptions.setAccessToken(mapboxAccessToken);
+
+
     runApp(const MyApp());
   } catch (e, stack) {
-    // If there is any error during initialization, print it.
-    // This will show up in the `flutter run --release` logs.
+   
     print('!!!!!!!!!! FATAL ERROR DURING APP STARTUP !!!!!!!!!!!');
     print('ERROR: $e');
     print('STACK TRACE: $stack');

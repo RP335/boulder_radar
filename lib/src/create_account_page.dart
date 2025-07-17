@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'signin_page.dart';
-import 'zones_page.dart'; // Assuming this is your main app page after login
+import 'zones_page.dart'; 
 import 'package:flutter/foundation.dart'; // for kIsWeb
 
 class CreateAccountPage extends StatefulWidget {

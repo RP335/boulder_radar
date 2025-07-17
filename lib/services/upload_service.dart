@@ -6,11 +6,9 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// This line is crucial. It tells Dart that a generated file is part of this one.
-// It will show an error until you run the build_runner command.
+
 part 'upload_service.g.dart';
 
-// 1. Data model for a pending upload
 @HiveType(typeId: 0)
 class PendingUpload extends HiveObject {
   @HiveField(0)
@@ -48,7 +46,7 @@ class PendingUpload extends HiveObject {
   });
 }
 
-// 2. The Singleton Service to manage the queue
+
 class UploadService {
   UploadService._privateConstructor();
   static final UploadService instance = UploadService._privateConstructor();
@@ -60,7 +58,6 @@ class UploadService {
   void init() {
     _queueBox = Hive.box<PendingUpload>('upload_queue');
 
-    // THE FIX: The incorrect type cast has been completely removed from this line.
     _connectivitySubscription =
         Connectivity().onConnectivityChanged.listen(_handleConnectivityChange);
 
@@ -72,7 +69,6 @@ class UploadService {
   }
 
   void _handleConnectivityChange(ConnectivityResult result) {
-    // MODIFIED: The check no longer uses .contains()
     if (result == ConnectivityResult.mobile ||
         result == ConnectivityResult.wifi) {
       print("Connection restored! Processing upload queue...");
@@ -84,7 +80,6 @@ class UploadService {
     if (_queueBox.isEmpty) return;
 
     final connectivityResult = await (Connectivity().checkConnectivity());
-    // MODIFIED: The check no longer uses .contains()
     if (connectivityResult == ConnectivityResult.none) return;
 
     print("Processing ${_queueBox.length} items in the queue.");
