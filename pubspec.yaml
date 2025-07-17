@@ -49,6 +49,7 @@ dependencies:
   file_picker: 8.1.2
   flutter_animate: 4.5.0
   flutter_cache_manager: 3.4.1
+  flutter_dotenv: ^5.0.0
   flutter_plugin_android_lifecycle: 2.0.20
   font_awesome_flutter: 10.7.0
   from_css_color: 2.0.0
@@ -157,6 +158,7 @@ flutter:
     - assets/signin-assets/Android/png@3x/neutral/
     - assets/images/
     - assets/maps/
+    - .env
   # - assets/videos/
   # - assets/audios/
   # - assets/rive_animations/
