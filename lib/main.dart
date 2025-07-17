@@ -34,6 +34,7 @@ Future<void> main() async {
     UploadService.instance.init();
 
     // 4. Set up other services like Mapbox.
+
     MapboxOptions.setAccessToken(
         '');
     // 5. Run the app.

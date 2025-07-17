@@ -1,5 +1,4 @@
 // lib/widgets/interactive_map_picker.dart
-
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -8,11 +7,13 @@ import 'package:geolocator/geolocator.dart' as geo;
 
 class InteractiveMapPicker extends StatefulWidget {
   final void Function(Point) onLocationSelected;
+  final Point? initialPoint;
 
   const InteractiveMapPicker({
-    Key? key,
+    super.key,
     required this.onLocationSelected,
-  }) : super(key: key);
+    this.initialPoint,
+  });
 
   @override
   State<InteractiveMapPicker> createState() => _InteractiveMapPickerState();
@@ -22,46 +23,61 @@ class _InteractiveMapPickerState extends State<InteractiveMapPicker> {
   MapboxMap? _mapboxMap;
   PointAnnotation? _pointAnnotation;
   PointAnnotationManager? _pointAnnotationManager;
-  String _currentMapStyle = MapboxStyles.MAPBOX_STREETS;
+  String _currentMapStyle = MapboxStyles.SATELLITE_STREETS;
+  Uint8List? _cachedMarkerImage;
+
+  @override
+  void initState() {
+    super.initState();
+    _createMarkerImage().then((image) {
+      if (mounted) {
+        setState(() => _cachedMarkerImage = image);
+      }
+    });
+  }
 
   Future<Uint8List> _createMarkerImage() async {
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(recorder);
     final Paint paint = Paint()..color = Colors.deepPurpleAccent;
-    const double radius = 30.0;
+    const double radius = 35.0;
     canvas.drawCircle(const Offset(radius, radius), radius, paint);
     paint.color = Colors.white;
-    canvas.drawCircle(const Offset(radius, radius), radius * 0.3, paint);
-    final img = await recorder.endRecording().toImage(
-          (radius * 2).toInt(),
-          (radius * 2).toInt(),
-        );
+    canvas.drawCircle(const Offset(radius, radius), radius * 0.35, paint);
+    final img = await recorder
+        .endRecording()
+        .toImage((radius * 2).toInt(), (radius * 2).toInt());
     final data = await img.toByteData(format: ui.ImageByteFormat.png);
     return data!.buffer.asUint8List();
   }
 
   Future<void> _onMapCreated(MapboxMap mapboxMap) async {
     _mapboxMap = mapboxMap;
+    _mapboxMap?.gestures.updateSettings(GesturesSettings(
+      pinchToZoomEnabled: true,
+      scrollEnabled: true,
+      rotateEnabled: true,
+      pitchEnabled: true,
+    ));
 
-    // Explicitly enable gestures for smooth interaction
-    mapboxMap.gestures.updateSettings(
-      GesturesSettings(
-        pinchToZoomEnabled: true,
-        scrollEnabled: true,
-        rotateEnabled: false, // Disabling rotate for a simpler experience
-      ),
-    );
+    // THE FIX: This code enables the user location puck (the blue dot).
+    _mapboxMap?.location.updateSettings(LocationComponentSettings(
+      enabled: true,
+      pulsingEnabled: true,
+    ));
 
-    _mapboxMap?.location.updateSettings(
-      LocationComponentSettings(enabled: true),
-    );
+    _pointAnnotationManager =
+        await _mapboxMap?.annotations.createPointAnnotationManager();
 
-    // Prepare for point annotations
-    mapboxMap.annotations.createPointAnnotationManager().then((mgr) {
-      _pointAnnotationManager = mgr;
-    });
-
-    await _centerMapOnUser();
+    if (widget.initialPoint != null) {
+      _updateMarker(widget.initialPoint!);
+      await _mapboxMap?.flyTo(
+        CameraOptions(center: widget.initialPoint, zoom: 16.0),
+        MapAnimationOptions(duration: 1200),
+      );
+    } else {
+      await _centerMapOnUser();
+    }
   }
 
   Future<void> _centerMapOnUser() async {
@@ -71,131 +87,80 @@ class _InteractiveMapPickerState extends State<InteractiveMapPicker> {
         permission = await geo.Geolocator.requestPermission();
       }
       if (permission == geo.LocationPermission.denied ||
-          permission == geo.LocationPermission.deniedForever) {
-        // Handle case where user denies location access
-        if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text(
-                    'Location permission denied. Cannot center on your location.'),
-              ),
-            );
-        }
-        return;
-      }
-      final pos = await geo.Geolocator.getCurrentPosition(
-        desiredAccuracy: geo.LocationAccuracy.high,
-      ).timeout(const Duration(seconds: 5));
+          permission == geo.LocationPermission.deniedForever) return;
 
-      _mapboxMap?.flyTo(
+      final pos = await geo.Geolocator.getCurrentPosition(
+          desiredAccuracy: geo.LocationAccuracy.high);
+      await _mapboxMap?.flyTo(
         CameraOptions(
-          center: Point(
-            coordinates: Position(pos.longitude, pos.latitude),
-          ),
-          zoom: 17.0,
-        ),
+            center: Point(coordinates: Position(pos.longitude, pos.latitude)),
+            zoom: 14.0),
         MapAnimationOptions(duration: 1500),
       );
     } catch (e) {
       debugPrint('Could not center on user: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('Could not get current location.'),
-              backgroundColor: Colors.orange),
-        );
-      }
     }
   }
 
-  void _onMapTap(ScreenCoordinate coordinate) async {
-    final tapped = await _mapboxMap!.coordinateForPixel(coordinate);
+// NEW, CORRECTED CODE
+
+  void _handleMapTap(MapContentGestureContext context) {
+    final Point tappedPoint = context.point;
+    _updateMarker(tappedPoint);
+  }
+
+  void _updateMarker(Point point) async {
+    if (_cachedMarkerImage == null) return;
 
     if (_pointAnnotation != null) {
-      _pointAnnotation!.geometry = tapped;
+      _pointAnnotation!.geometry = point;
       _pointAnnotationManager?.update(_pointAnnotation!);
     } else {
-      final markerImg = await _createMarkerImage();
-      _pointAnnotationManager
-          ?.create(PointAnnotationOptions(
-        geometry: tapped,
-        image: markerImg,
+      final options = PointAnnotationOptions(
+        geometry: point,
+        image: _cachedMarkerImage,
         iconSize: 0.8,
-      ))
-          .then((ann) {
-        if (mounted) setState(() => _pointAnnotation = ann);
-      });
+        iconAnchor: IconAnchor.CENTER,
+      );
+      final annotation = await _pointAnnotationManager?.create(options);
+      if (mounted) setState(() => _pointAnnotation = annotation);
     }
-    widget.onLocationSelected(tapped);
+    // This call is what enables the "Confirm" button.
+    widget.onLocationSelected(point);
   }
 
   void _toggleMapStyle() {
+    if (_mapboxMap == null) return;
     setState(() {
       _currentMapStyle = _currentMapStyle == MapboxStyles.SATELLITE_STREETS
           ? MapboxStyles.MAPBOX_STREETS
           : MapboxStyles.SATELLITE_STREETS;
     });
-     // Update the style on the map controller
-    _mapboxMap?.loadStyleURI(_currentMapStyle);
+    _mapboxMap?.loadStyleURI('$_currentMapStyle?optimize=true');
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Stack(
       children: [
-        AspectRatio(
-          aspectRatio: 16 / 12,
-          child: Stack(
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade700, width: 1.5),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10.5),
-                  child: MapWidget(
-                    onMapCreated: _onMapCreated,
-                    onTapListener: (ctx) => _onMapTap(ctx.touchPosition),
-                    // Use the optimize flag for better performance
-                    styleUri: '$_currentMapStyle?optimize=true',
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 10,
-                right: 10,
-                child: FloatingActionButton.small(
-                  heroTag: 'toggleStyleFab',
-                  backgroundColor: Colors.black.withOpacity(0.6),
-                  onPressed: _toggleMapStyle,
-                  tooltip: 'Toggle Map Style',
-                  child: Icon(
-                    _currentMapStyle == MapboxStyles.SATELLITE_STREETS
-                        ? Icons.map_outlined
-                        : Icons.satellite_alt_outlined,
-                    color: Colors.white,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        MapWidget(
+          onMapCreated: _onMapCreated,
+          onTapListener: _handleMapTap,
+          styleUri: '$_currentMapStyle?optimize=true',
         ),
-        const SizedBox(height: 12),
-        Center(
-          child: Text(
-            _pointAnnotation == null
-                ? 'Tap map to pinpoint the boulder\'s location.'
-                : 'Location selected.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: _pointAnnotation == null
-                  ? Colors.blueGrey[200]
-                  : Colors.green[300],
-              fontStyle: FontStyle.italic,
-              fontWeight:
-                  _pointAnnotation != null ? FontWeight.bold : FontWeight.normal,
+        Positioned(
+          top: 10,
+          right: 10,
+          child: FloatingActionButton.small(
+            heroTag: 'toggleStyleFab_interactive',
+            backgroundColor: Colors.black.withOpacity(0.7),
+            onPressed: _toggleMapStyle,
+            tooltip: 'Toggle Map Style',
+            child: Icon(
+              _currentMapStyle == MapboxStyles.SATELLITE_STREETS
+                  ? Icons.map_outlined
+                  : Icons.satellite_alt_outlined,
+              color: Colors.white,
             ),
           ),
         ),

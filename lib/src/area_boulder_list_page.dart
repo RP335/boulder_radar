@@ -35,26 +35,26 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
   final SupabaseClient _supabase = Supabase.instance.client;
   final _searchController = TextEditingController();
 
-  final Map<String, int> _vScaleSortMap = {
-    'V0': 0,
-    'V1': 1,
-    'V2': 2,
-    'V3': 3,
-    'V4': 4,
-    'V5': 5,
-    'V6': 6,
-    'V7': 7,
-    'V8': 8,
-    'V9': 9,
-    'V10': 10,
-    'V11': 11,
-    'V12': 12,
-    'V13': 13,
-    'V14': 14,
-    'V15': 15,
-    'V16': 16,
-    'V17': 17,
-  };
+  // final Map<String, int> _vScaleSortMap = {
+  //   'V0': 0,
+  //   'V1': 1,
+  //   'V2': 2,
+  //   'V3': 3,
+  //   'V4': 4,
+  //   'V5': 5,
+  //   'V6': 6,
+  //   'V7': 7,
+  //   'V8': 8,
+  //   'V9': 9,
+  //   'V10': 10,
+  //   'V11': 11,
+  //   'V12': 12,
+  //   'V13': 13,
+  //   'V14': 14,
+  //   'V15': 15,
+  //   'V16': 16,
+  //   'V17': 17,
+  // };
   final Map<String, int> _fontScaleSortMap = {
     '4': 0,
     '5': 1,
@@ -85,7 +85,7 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
   Future<void>? _fetchFuture;
 
   BoulderSortOrder _sortOrder = BoulderSortOrder.distance;
-  GradeSystem _gradeSystem = GradeSystem.vScale;
+  GradeSystem _gradeSystem = GradeSystem.font;
 
   @override
   void initState() {
@@ -129,7 +129,7 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
       workingList = workingList.where((boulder) {
         final grade = boulder['grade']?.toString().toUpperCase() ?? '';
         return _gradeSystem == GradeSystem.vScale
-            ? _vScaleSortMap.containsKey(grade)
+            ? false // V-Scale is disabled.
             : _fontScaleSortMap.containsKey(grade);
       }).toList();
     }
@@ -155,8 +155,9 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
 
   num _getGradeValue(String grade, GradeSystem system) {
     final gradeUpper = grade.toUpperCase();
+    // This logic will now default to the Font scale map.
     return system == GradeSystem.vScale
-        ? _vScaleSortMap[gradeUpper] ?? 999
+        ? 999 // V-Scale is disabled.
         : _fontScaleSortMap[gradeUpper] ?? 999;
   }
 
@@ -256,6 +257,7 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
                   flex: 2,
                   child: SegmentedButton<BoulderSortOrder>(
                       style: _segmentedButtonStyle(),
+                      showSelectedIcon: false, 
                       segments: const [
                         ButtonSegment(
                             value: BoulderSortOrder.distance,
@@ -271,25 +273,25 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
                             _sortOrder = s.first;
                             _filterAndSortBoulders();
                           }))),
-              if (_sortOrder == BoulderSortOrder.grade) ...[
-                const SizedBox(width: 10),
-                Expanded(
-                    flex: 3,
-                    child: SegmentedButton<GradeSystem>(
-                        style: _segmentedButtonStyle(),
-                        segments: const [
-                          ButtonSegment(
-                              value: GradeSystem.vScale,
-                              label: Text('V-Scale')),
-                          ButtonSegment(
-                              value: GradeSystem.font, label: Text('Font'))
-                        ],
-                        selected: {_gradeSystem},
-                        onSelectionChanged: (s) => setState(() {
-                              _gradeSystem = s.first;
-                              _filterAndSortBoulders();
-                            })))
-              ]
+              // if (_sortOrder == BoulderSortOrder.grade) ...[
+              //   const SizedBox(width: 10),
+              //   Expanded(
+              //       flex: 3,
+              //       child: SegmentedButton<GradeSystem>(
+              //           style: _segmentedButtonStyle(),
+              //           segments: const [
+              //             ButtonSegment(
+              //                 value: GradeSystem.vScale,
+              //                 label: Text('V-Scale')),
+              //             ButtonSegment(
+              //                 value: GradeSystem.font, label: Text('Font'))
+              //           ],
+              //           selected: {_gradeSystem},
+              //           onSelectionChanged: (s) => setState(() {
+              //                 _gradeSystem = s.first;
+              //                 _filterAndSortBoulders();
+              //               })))
+              // ]
             ]),
           ),
           Expanded(
@@ -345,13 +347,14 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
     );
   }
 
-  ButtonStyle _segmentedButtonStyle() => SegmentedButton.styleFrom(
-      backgroundColor: Colors.grey.shade800,
-      foregroundColor: Colors.white70,
-      selectedForegroundColor: Colors.white,
-      selectedBackgroundColor: Colors.deepPurple,
-      side: BorderSide(color: Colors.grey.shade700),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)));
+ButtonStyle _segmentedButtonStyle() => SegmentedButton.styleFrom(
+    backgroundColor: Colors.grey.shade800,
+    foregroundColor: Colors.white70,
+    selectedForegroundColor: Colors.white,
+    selectedBackgroundColor: Colors.deepPurple,
+    side: BorderSide(color: Colors.grey.shade700),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+);
 
   Widget _buildEmptyState(String message) => Center(
       child: Padding(

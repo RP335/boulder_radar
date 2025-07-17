@@ -16,8 +16,6 @@ class ZonesPage extends StatefulWidget {
 class _ZonesPageState extends State<ZonesPage> {
   final SupabaseClient _supabase = Supabase.instance.client;
   late Future<List<Map<String, dynamic>>> _zonesFuture;
-
-  // Tracks the offline state to show/hide the banner
   bool _isOffline = false;
 
   @override
@@ -26,39 +24,38 @@ class _ZonesPageState extends State<ZonesPage> {
     _zonesFuture = _fetchZones();
   }
 
-  // --- MODIFIED: Now includes caching logic ---
   Future<List<Map<String, dynamic>>> _fetchZones() async {
     try {
-      // 1. TRY TO FETCH FROM NETWORK
       final List<Map<String, dynamic>> data =
           await _supabase.from('zones').select();
-
-      // 2. IF SUCCESSFUL, SAVE TO CACHE
       final prefs = await SharedPreferences.getInstance();
-      final zonesJson = jsonEncode(data);
-      await prefs.setString('cached_zones', zonesJson);
-
+      await prefs.setString('cached_zones', jsonEncode(data));
       if (mounted) {
         setState(() => _isOffline = false);
       }
       return data;
     } catch (e) {
-      // 3. IF FETCHING FAILS, TRY TO LOAD FROM CACHE
       print('Failed to fetch zones from network, trying cache. Error: $e');
       final prefs = await SharedPreferences.getInstance();
       final cachedData = prefs.getString('cached_zones');
-
       if (cachedData != null) {
         if (mounted) {
-          setState(() => _isOffline = true); // Set offline mode!
+          setState(() => _isOffline = true);
         }
-        final List<dynamic> decodedData = jsonDecode(cachedData);
-        return decodedData.cast<Map<String, dynamic>>();
+        return jsonDecode(cachedData).cast<Map<String, dynamic>>();
       } else {
-        // 4. IF NETWORK AND CACHE BOTH FAIL, then show an error.
         throw Exception('An unexpected error occurred: $e');
       }
     }
+  }
+    
+  // --- NEW: Refresh handler ---
+  // This function is called by the RefreshIndicator.
+  // It re-runs the fetch logic and updates the state.
+  Future<void> _handleRefresh() async {
+    setState(() {
+      _zonesFuture = _fetchZones();
+    });
   }
 
   Future<void> _signOut() async {
@@ -87,8 +84,9 @@ class _ZonesPageState extends State<ZonesPage> {
     return Scaffold(
       backgroundColor: Colors.grey.shade900,
       appBar: AppBar(
+        // --- MODIFIED: Renamed the app ---
         title: const Text(
-          'Craglist',
+          'Boulderly',
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         automaticallyImplyLeading: false,
@@ -102,10 +100,8 @@ class _ZonesPageState extends State<ZonesPage> {
           ),
         ],
       ),
-      // --- MODIFIED: Wrapped in a Column to hold the banner ---
       body: Column(
         children: [
-          // --- NEW: Offline Banner ---
           if (_isOffline)
             Container(
               width: double.infinity,
@@ -118,7 +114,6 @@ class _ZonesPageState extends State<ZonesPage> {
                     TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               ),
             ),
-          // --- NEW: Expanded takes up the remaining space ---
           Expanded(
             child: FutureBuilder<List<Map<String, dynamic>>>(
               future: _zonesFuture,
@@ -131,7 +126,7 @@ class _ZonesPageState extends State<ZonesPage> {
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
                       child: Text(
-                        'Error loading zones:\nFailed to connect. Please check your internet connection and try again.',
+                        'Error loading zones:\nFailed to connect. Pull down to try again.',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: Colors.red),
                       ),
@@ -147,92 +142,107 @@ class _ZonesPageState extends State<ZonesPage> {
                     ),
                   );
                 }
-                return SingleChildScrollView(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                // --- MODIFIED: Added RefreshIndicator ---
+                return RefreshIndicator(
+                  onRefresh: _handleRefresh,
+                  color: Colors.white,
+                  backgroundColor: Colors.grey.shade800,
+                  child: SingleChildScrollView(
+                    // physics is important for the indicator to work correctly
+                    physics: const AlwaysScrollableScrollPhysics(),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         const SizedBox(height: 20),
+                        // --- MODIFIED: Image styling for full-width ---
                         Image.asset(
                           'assets/images/Climbing-pana_1.png',
                           height: 200,
+                          width: double.infinity, // Stretches to fill width
+                          fit: BoxFit.cover,      // Covers the area without distortion
                         ),
                         const SizedBox(height: 24),
-                        const Text(
-                          'Chalk up, folks!',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Where are we climbing today?',
-                          style: TextStyle(
-                            color: Colors.grey.shade400,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 32),
-                        GridView.builder(
-                          itemCount: zones.length,
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          gridDelegate:
-                              const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 2,
-                            mainAxisSpacing: 16,
-                            crossAxisSpacing: 16,
-                            childAspectRatio: 1.1,
-                          ),
-                          itemBuilder: (context, index) {
-                            final zone = zones[index];
-                            final zoneId = zone['id'] as String;
-                            final zoneName =
-                                zone['name'] as String? ?? 'Unnamed Zone';
-                            return GestureDetector(
-                              onTap: () {
-                                Navigator.of(context).push(
-                                  MaterialPageRoute(
-                                    builder: (_) => ZoneAreasListPage(
-                                      // <-- CHANGE
-                                      zoneId: zoneId,
-                                      zoneName: zoneName,
-                                    ),
-                                  ),
-                                );
-                              },
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade800,
-                                  borderRadius: BorderRadius.circular(12),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 4,
-                                      offset: const Offset(2, 2),
-                                    )
-                                  ],
-                                ),
-                                child: Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: Text(
-                                      zoneName,
-                                      style: const TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w600,
-                                        color: Colors.white,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ),
+                        // --- MODIFIED: Wrapped text/grid in Padding ---
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          child: Column(
+                            children: [
+                              const Text(
+                                'Chalk up, folks!',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                            );
-                          },
+                              const SizedBox(height: 8),
+                              Text(
+                                'Where are we climbing today?',
+                                style: TextStyle(
+                                  color: Colors.grey.shade400,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              const SizedBox(height: 32),
+                              GridView.builder(
+                                itemCount: zones.length,
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                gridDelegate:
+                                    const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  mainAxisSpacing: 16,
+                                  crossAxisSpacing: 16,
+                                  childAspectRatio: 1.1,
+                                ),
+                                itemBuilder: (context, index) {
+                                  final zone = zones[index];
+                                  final zoneId = zone['id'] as String;
+                                  final zoneName =
+                                      zone['name'] as String? ?? 'Unnamed Zone';
+                                  return GestureDetector(
+                                    onTap: () {
+                                      Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => ZoneAreasListPage(
+                                            zoneId: zoneId,
+                                            zoneName: zoneName,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: Colors.grey.shade800,
+                                        borderRadius: BorderRadius.circular(12),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withOpacity(0.2),
+                                            blurRadius: 4,
+                                            offset: const Offset(2, 2),
+                                          )
+                                        ],
+                                      ),
+                                      child: Center(
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(8.0),
+                                          child: Text(
+                                            zoneName,
+                                            style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w600,
+                                              color: Colors.white,
+                                            ),
+                                            textAlign: TextAlign.center,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 20),
                       ],

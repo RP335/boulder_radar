@@ -1,11 +1,11 @@
 // lib/widgets/boulder_location_map.dart
 
 import 'dart:convert';
-import 'dart:typed_data'; // Required for Uint8List
-import 'dart:ui' as ui; // Required for PictureRecorder and Canvas
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart' as geo;
-import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
+import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import 'package:http/http.dart' as http;
 
 class BoulderLocationMap extends StatefulWidget {
@@ -28,13 +28,16 @@ class _BoulderLocationMapState extends State<BoulderLocationMap> {
   // IMPORTANT: Replace this with your actual Mapbox public token
   static const String _mapboxAccessToken =
       '';
-  MapboxMap? _mapboxMap;
-  PointAnnotationManager? _pointAnnotationManager;
+  mapbox.MapboxMap? _mapboxMap;
+  mapbox.PointAnnotationManager? _pointAnnotationManager;
   geo.Position? _userPosition;
   bool _isLoading = true;
   String? _error;
-  String _currentMapStyle = MapboxStyles.MAPBOX_STREETS;
+  String _currentMapStyle = mapbox.MapboxStyles.MAPBOX_STREETS;
 
+  // Performance optimization: Cache the marker image
+  Uint8List? _cachedMarkerImage;
+  bool _isRouteLoaded = false;
 
   @override
   void initState() {
@@ -43,10 +46,16 @@ class _BoulderLocationMapState extends State<BoulderLocationMap> {
   }
 
   Future<void> _initialize() async {
+    // Pre-generate marker image for better performance
+    _cachedMarkerImage = await _createBoulderMarkerImage();
+
     // Only get user location if we are online and need to draw a route
-    if (!widget.isOffline) {
-      await _getUserLocation();
-    }
+    // if (!widget.isOffline) {
+    //   await _getUserLocation();
+    // }
+    await _getUserLocation();
+
+
     if (mounted) {
       setState(() {
         _isLoading = false;
@@ -69,25 +78,37 @@ class _BoulderLocationMapState extends State<BoulderLocationMap> {
         desiredAccuracy: geo.LocationAccuracy.high,
       );
     } catch (e) {
-      // Don't treat this as a fatal error, we just won't show the route
       print("Could not get user location: ${e.toString()}");
     }
   }
 
-  /// Creates a custom marker image by drawing on a Canvas.
+  /// Creates a custom marker image - cached for performance
   Future<Uint8List> _createBoulderMarkerImage() async {
     final ui.PictureRecorder recorder = ui.PictureRecorder();
     final Canvas canvas = Canvas(recorder);
-    // Use a color that contrasts with the purple route line, like red or orange
-    final Paint paint = Paint()..color = Colors.redAccent;
-    const double radius = 35.0; // A bit larger for visibility
+    final Paint paint = Paint()
+      ..color = Colors.redAccent
+      ..style = PaintingStyle.fill;
 
-    // Draw outer circle
+    const double radius = 30.0; // Slightly smaller for better performance
+    const double strokeWidth = 3.0;
+
+    // Draw outer circle with stroke
     canvas.drawCircle(const Offset(radius, radius), radius, paint);
 
-    // Draw a smaller white inner circle to make it look like a pin
-    paint.color = Colors.white;
-    canvas.drawCircle(const Offset(radius, radius), radius * 0.4, paint);
+    // Draw stroke
+    paint
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth;
+    canvas.drawCircle(
+        const Offset(radius, radius), radius - strokeWidth / 2, paint);
+
+    // Draw inner circle
+    paint
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(const Offset(radius, radius), radius * 0.35, paint);
 
     final img = await recorder.endRecording().toImage(
           (radius * 2).toInt(),
@@ -97,63 +118,99 @@ class _BoulderLocationMapState extends State<BoulderLocationMap> {
     return data!.buffer.asUint8List();
   }
 
-  Future<void> _onMapCreated(MapboxMap mapboxMap) async {
+  Future<void> _onMapCreated(mapbox.MapboxMap mapboxMap) async {
     _mapboxMap = mapboxMap;
-    
-    // Explicitly enable gestures for smooth interaction
-    _mapboxMap?.gestures.updateSettings(
-        GesturesSettings(pinchToZoomEnabled: true, scrollEnabled: true));
-        
-    _mapboxMap?.location
-        .updateSettings(LocationComponentSettings(enabled: true));
 
-    // Generate the marker image dynamically
-    final markerBytes = await _createBoulderMarkerImage();
-    await _addBoulderMarker(markerBytes);
+    // Optimized gesture settings for smooth interaction
+    await _mapboxMap?.gestures.updateSettings(mapbox.GesturesSettings(
+      pinchToZoomEnabled: true,
+      scrollEnabled: true,
+      rotateEnabled: true,
+      doubleTapToZoomInEnabled: true,
+      doubleTouchToZoomOutEnabled: true,
+      quickZoomEnabled: true,
+      pitchEnabled: false, // Disable pitch for better performance
+      simultaneousRotateAndPinchToZoomEnabled: true,
+      focalPoint: null, // Let system handle focal point
+    ));
 
+    // Optimize location component settings
+// lib/widgets/boulder_location_map.dart -> Correction
+
+    await _mapboxMap?.location.updateSettings(mapbox.LocationComponentSettings(
+      enabled: true, // Always enable the location puck
+      pulsingEnabled:
+          true, // Optional: A pulsing effect can be nice for visibility
+      showAccuracyRing: true, // Optional: Shows the GPS accuracy
+    ));
+
+    // Add boulder marker using cached image
+    if (_cachedMarkerImage != null) {
+      await _addBoulderMarker(_cachedMarkerImage!);
+    }
+
+    // Handle route and camera positioning
     if (_userPosition != null && !widget.isOffline) {
       await _fetchRouteAndDraw();
-      _zoomToFitRoute();
+      await _zoomToFitRoute();
     } else {
-      // If no user location or offline, just fly to the boulder
-      _mapboxMap?.flyTo(
-          CameraOptions(
-              center: Point(
-                  coordinates: Position(
-                      widget.boulderLongitude, widget.boulderLatitude)),
-              zoom: 15),
-          null);
+      // Smooth camera transition to boulder location
+      await _mapboxMap?.flyTo(
+        mapbox.CameraOptions(
+          center: mapbox.Point(
+              coordinates: mapbox.Position(
+                  widget.boulderLongitude, widget.boulderLatitude)),
+          zoom: 15.0,
+          pitch: 0.0, // Keep flat for better performance
+        ),
+        mapbox.MapAnimationOptions(
+          duration: 800, // Shorter duration for snappier feel
+          // No easing specified - uses default which is optimized
+        ),
+      );
     }
   }
 
-  /// Adds the dynamically created marker to the map.
+  /// Optimized marker addition with cached image
   Future<void> _addBoulderMarker(Uint8List markerImage) async {
-    _pointAnnotationManager ??=
-        await _mapboxMap?.annotations.createPointAnnotationManager();
-    final options = PointAnnotationOptions(
-      geometry: Point(
-          coordinates:
-              Position(widget.boulderLongitude, widget.boulderLatitude)),
-      // Use the generated byte data for the image
-      image: markerImage,
-      iconSize: 0.8,
-      iconAnchor: IconAnchor.CENTER,
-    );
-    _pointAnnotationManager?.create(options);
+    try {
+      _pointAnnotationManager ??=
+          await _mapboxMap?.annotations.createPointAnnotationManager();
+
+      final options = mapbox.PointAnnotationOptions(
+        geometry: mapbox.Point(
+            coordinates: mapbox.Position(
+                widget.boulderLongitude, widget.boulderLatitude)),
+        image: markerImage,
+        iconSize: 0.7, // Slightly smaller for better performance
+        iconAnchor: mapbox.IconAnchor.CENTER,
+        // Remove the invalid parameters - these aren't available in PointAnnotationOptions
+      );
+
+      await _pointAnnotationManager?.create(options);
+    } catch (e) {
+      print("Error adding boulder marker: $e");
+    }
   }
 
   Future<void> _fetchRouteAndDraw() async {
-    // This check correctly prevents network errors when offline
-    if (widget.isOffline) {
+    if (widget.isOffline || _userPosition == null || _isRouteLoaded) {
       return;
     }
-    if (_userPosition == null) return;
 
     final origin = _userPosition!;
-    final destination = Point(
-        coordinates: Position(widget.boulderLongitude, widget.boulderLatitude));
-    final url =
-        'https://api.mapbox.com/directions/v5/mapbox/walking/${origin.longitude},${origin.latitude};${destination.coordinates.lng},${destination.coordinates.lat}?geometries=geojson&access_token=$_mapboxAccessToken';
+    final destination = mapbox.Point(
+        coordinates:
+            mapbox.Position(widget.boulderLongitude, widget.boulderLatitude));
+
+    // Optimized route URL with additional parameters for better performance
+    final url = 'https://api.mapbox.com/directions/v5/mapbox/walking/'
+        '${origin.longitude},${origin.latitude};'
+        '${destination.coordinates.lng},${destination.coordinates.lat}'
+        '?geometries=geojson'
+        '&overview=simplified' // Use simplified geometry for better performance
+        '&steps=false' // Disable steps if not needed
+        '&access_token=$_mapboxAccessToken';
 
     try {
       final response = await http.get(Uri.parse(url));
@@ -161,130 +218,249 @@ class _BoulderLocationMapState extends State<BoulderLocationMap> {
         final data = json.decode(response.body);
         final route = data['routes'][0]['geometry'];
 
-        if (await _mapboxMap?.style.styleSourceExists('route-source') ==
-            false) {
-          await _mapboxMap?.style.addSource(
-              GeoJsonSource(id: 'route-source', data: json.encode(route)));
+        // Check if source exists before adding
+        final sourceExists =
+            await _mapboxMap?.style.styleSourceExists('route-source') ?? false;
+        if (!sourceExists) {
+          await _mapboxMap?.style.addSource(mapbox.GeoJsonSource(
+            id: 'route-source',
+            data: json.encode(route),
+            // Performance optimization: disable clustering and line metrics
+            cluster: false,
+            lineMetrics: false,
+          ));
+        } else {
+          // Use setStyleSourceProperty to update existing source
+          await _mapboxMap?.style.setStyleSourceProperty(
+            'route-source',
+            'data',
+            json.encode(route),
+          );
         }
 
-        if (await _mapboxMap?.style.styleLayerExists('route-layer') == false) {
-          await _mapboxMap?.style.addLayer(LineLayer(
+        // Add layer only if it doesn't exist
+        final layerExists =
+            await _mapboxMap?.style.styleLayerExists('route-layer') ?? false;
+        if (!layerExists) {
+          await _mapboxMap?.style.addLayer(mapbox.LineLayer(
             id: 'route-layer',
             sourceId: 'route-source',
-            lineColor: Colors.deepPurpleAccent.value,
-            lineWidth: 5.0,
-            lineOpacity: 0.8,
+            lineColor:
+                Colors.deepPurple.value, // Slightly darker for better contrast
+            lineWidth: 4.0, // Slightly thinner for better performance
+            lineOpacity: 0.9,
+            // Performance optimizations
+            lineCap: mapbox.LineCap.ROUND,
+            lineJoin: mapbox.LineJoin.ROUND,
+            // Use mapbox.Visibility instead of Flutter's Visibility
+            visibility: mapbox.Visibility.VISIBLE,
           ));
         }
+
+        _isRouteLoaded = true;
       } else {
-        throw Exception('Failed to load route: ${response.body}');
+        throw Exception('Failed to load route: ${response.statusCode}');
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error fetching directions: ${e.toString()}')),
+          SnackBar(
+            content: Text('Error fetching directions: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+          ),
         );
       }
     }
   }
 
-  void _zoomToFitRoute() async {
+  Future<void> _zoomToFitRoute() async {
     if (_userPosition == null || _mapboxMap == null) return;
 
-    final MbxEdgeInsets padding =
-        MbxEdgeInsets(top: 50.0, left: 50.0, bottom: 50.0, right: 50.0);
+    try {
+      // Create padding - don't use const since MbxEdgeInsets constructor isn't const
+      final padding = mapbox.MbxEdgeInsets(
+        top: 80.0,
+        left: 40.0,
+        bottom: 80.0,
+        right: 40.0,
+      );
 
-    final CameraOptions cameraOptions = await _mapboxMap!.cameraForCoordinates(
-      [
-        Point(
-            coordinates:
-                Position(_userPosition!.longitude, _userPosition!.latitude)),
-        Point(
-            coordinates:
-                Position(widget.boulderLongitude, widget.boulderLatitude)),
-      ],
-      padding,
-      null, // bearing
-      null, // pitch
-    );
+      final cameraOptions = await _mapboxMap!.cameraForCoordinates(
+        [
+          mapbox.Point(
+            coordinates: mapbox.Position(
+              _userPosition!.longitude,
+              _userPosition!.latitude,
+            ),
+          ),
+          mapbox.Point(
+            coordinates: mapbox.Position(
+              widget.boulderLongitude,
+              widget.boulderLatitude,
+            ),
+          ),
+        ],
+        padding,
+        null, // bearing
+        0.0, // pitch - keep flat for better performance
+      );
 
-    _mapboxMap?.flyTo(cameraOptions, MapAnimationOptions(duration: 1500));
+      await _mapboxMap?.flyTo(
+        cameraOptions,
+        mapbox.MapAnimationOptions(
+          duration: 1200, // Slightly faster animation
+        ),
+      );
+    } catch (e) {
+      print("Error fitting route to camera: $e");
+    }
   }
-  
-  void _toggleMapStyle() {
+
+  Future<void> _toggleMapStyle() async {
+    final newStyle = _currentMapStyle == mapbox.MapboxStyles.SATELLITE_STREETS
+        ? mapbox.MapboxStyles.MAPBOX_STREETS
+        : mapbox.MapboxStyles.SATELLITE_STREETS;
+
     setState(() {
-      _currentMapStyle = _currentMapStyle == MapboxStyles.SATELLITE_STREETS
-          ? MapboxStyles.MAPBOX_STREETS
-          : MapboxStyles.SATELLITE_STREETS;
+      _currentMapStyle = newStyle;
     });
-     // Update the style on the map controller
-    _mapboxMap?.loadStyleURI(_currentMapStyle);
-  }
 
+    // Optimized style switching with proper URL formatting
+    final optimizedStyleUrl = '$newStyle?optimize=true';
+    await _mapboxMap?.loadStyleURI(optimizedStyleUrl);
+
+    // Re-add markers and route after style change
+    if (_cachedMarkerImage != null) {
+      // Small delay to ensure style is loaded
+      await Future.delayed(const Duration(milliseconds: 100));
+      await _addBoulderMarker(_cachedMarkerImage!);
+
+      if (!widget.isOffline && _userPosition != null) {
+        _isRouteLoaded = false; // Reset route loaded flag
+        await _fetchRouteAndDraw();
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return const AspectRatio(
         aspectRatio: 16 / 10,
-        child: Center(child: CircularProgressIndicator()),
+        child: Center(
+          child: CircularProgressIndicator(
+            strokeWidth: 2.0,
+          ),
+        ),
       );
     }
+
     if (_error != null) {
       return AspectRatio(
         aspectRatio: 16 / 10,
         child: Container(
           decoration: BoxDecoration(
-              color: Colors.grey.shade800,
-              borderRadius: BorderRadius.circular(12)),
+            color: Colors.grey.shade800,
+            borderRadius: BorderRadius.circular(12),
+          ),
           child: Center(
-              child: Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Text(
-              _error!,
-              style: const TextStyle(color: Colors.red),
-              textAlign: TextAlign.center,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(
+                    Icons.error_outline,
+                    color: Colors.red,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _error!,
+                    style: const TextStyle(
+                      color: Colors.red,
+                      fontSize: 14,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
             ),
-          )),
+          ),
         ),
       );
     }
-    return AspectRatio(
-      aspectRatio: 16 / 10,
-      child: Stack(
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade700, width: 1.5),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10.5),
-              child: MapWidget(
-                onMapCreated: _onMapCreated,
-                // Use the optimize flag for better performance
-                styleUri: '$_currentMapStyle?optimize=true',
+
+    return Stack(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            // This styling is fine, but you could remove the borderRadius
+            // for a true edge-to-edge full-screen map if you prefer.
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade700, width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10.5),
+            child: mapbox.MapWidget(
+              onMapCreated: _onMapCreated,
+              // Use optimized style URL for better performance
+              styleUri: '$_currentMapStyle?optimize=true',
+              // MapOptions constructor doesn't have antialiasing parameter
+              mapOptions: mapbox.MapOptions(
+                // Optimize for performance
+                pixelRatio: MediaQuery.of(context).devicePixelRatio,
               ),
             ),
           ),
-          Positioned(
-            top: 10,
-            right: 10,
-            child: FloatingActionButton.small(
-              heroTag: 'toggleStyleFabBoulderMap', // Unique heroTag
-              backgroundColor: Colors.black.withOpacity(0.6),
-              onPressed: _toggleMapStyle,
-              tooltip: 'Toggle Map Style',
-              child: Icon(
-                _currentMapStyle == MapboxStyles.SATELLITE_STREETS
-                    ? Icons.map_outlined
-                    : Icons.satellite_alt_outlined,
-                color: Colors.white,
+        ),
+        // Style toggle button
+        Positioned(
+          top: 10,
+          right: 10,
+          child: Material(
+            borderRadius: BorderRadius.circular(20),
+            elevation: 4,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.7),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: IconButton(
+                icon: Icon(
+                  _currentMapStyle == mapbox.MapboxStyles.SATELLITE_STREETS
+                      ? Icons.map_outlined
+                      : Icons.satellite_alt_outlined,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                onPressed: _toggleMapStyle,
+                tooltip: 'Toggle Map Style',
+                padding: const EdgeInsets.all(8),
+                constraints: const BoxConstraints(
+                  minWidth: 36,
+                  minHeight: 36,
+                ),
               ),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
+  }
+
+  @override
+  void dispose() {
+    // Clean up resources
+    _pointAnnotationManager?.deleteAll();
+    _mapboxMap?.dispose();
+    super.dispose();
   }
 }

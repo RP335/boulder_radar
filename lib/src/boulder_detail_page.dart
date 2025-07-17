@@ -1,5 +1,7 @@
+import 'package:boulder_radar/src/full_screen_map_page.dart';
 import 'package:boulder_radar/widgets/boulder_location_map.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -575,65 +577,86 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
             const SizedBox(height: 20),
 
             _buildSectionTitle('Coordinates'),
-            Text(
-              (latitude != null && longitude != null)
-                  ? 'Lat: $latitude, Lng: $longitude'
-                  : 'Coordinates not available.',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: Colors.white.withOpacity(0.8)),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Text(
+                    (latitude != null && longitude != null)
+                        // Parse string to double for display formatting
+                        ? 'Lat: ${double.tryParse(latitude)?.toStringAsFixed(6) ?? latitude}, Lng: ${double.tryParse(longitude)?.toStringAsFixed(6) ?? longitude}'
+                        : 'Coordinates not available.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.white.withOpacity(0.8)),
+                  ),
+                ),
+                // Only show the copy button if coordinates exist
+                if (latitude != null && longitude != null)
+                  IconButton(
+                    icon: Icon(
+                      Icons.copy,
+                      size: 20.0,
+                      color: Colors.white.withOpacity(0.8),
+                    ),
+                    tooltip: 'Copy Coordinates',
+                    onPressed: () {
+                      // The original, full-precision strings are used for copying
+                      final String coordinatesToCopy = '$latitude,$longitude';
+                      Clipboard.setData(ClipboardData(text: coordinatesToCopy))
+                          .then((_) {
+                        // Show a confirmation message
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Coordinates copied to clipboard!'),
+                            behavior: SnackBarBehavior.floating,
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      });
+                    },
+                  ),
+              ],
             ),
             const SizedBox(height: 24),
 
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.map_outlined),
-                    label: const Text('Google Maps'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent.withOpacity(0.8),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                    ),
-                    onPressed: (latitude != null && longitude != null)
-                        ? () => _launchMapsUrl(
-                            'https://www.google.com/maps/search/?api=1&query=$latitude,$longitude') // Ensure this Google Maps URL is correct for your needs
-                        : null,
-                  ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.map_outlined),
+                label: const Text('Open in Google Maps'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent.withOpacity(0.8),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.terrain_outlined), // Example icon
-                    label: const Text('Gaia GPS'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green.withOpacity(0.8),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8)),
-                    ),
-                    onPressed: (latitude != null && longitude != null)
-                        // Using zoom level 15 as an example, adjust as needed. Format: ZOOM/LONGITUDE/LATITUDE
-                        ? () => _launchMapsUrl(
-                            'https://www.gaiagps.com/map/?loc=15/$longitude/$latitude')
-                        : null,
-                  ),
-                ),
-              ],
+                onPressed: (latitude != null && longitude != null)
+                    ? () => _launchMapsUrl(
+                        'https://maps.google.com/?q=$latitude,$longitude')
+                    : null,
+              ),
             ),
             const SizedBox(height: 16),
 
             _buildSectionTitle('Location Map'),
             const SizedBox(height: 4),
             if (latitude != null && longitude != null)
-              BoulderLocationMap(
-                boulderLatitude: double.parse(latitude),
-                boulderLongitude: double.parse(longitude),
+              _MapPreview(
+                latitude: latitude,
+                longitude: longitude,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => FullScreenMapPage(
+                        boulderLatitude: double.parse(latitude!),
+                        boulderLongitude: double.parse(longitude!),
+                      ),
+                    ),
+                  );
+                },
               )
             else
               Container(
@@ -696,6 +719,106 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
               color: Colors.white.withOpacity(0.95),
               fontWeight: FontWeight.w600,
             ),
+      ),
+    );
+  }
+}
+
+class _MapPreview extends StatelessWidget {
+  final String latitude;
+  final String longitude;
+  final VoidCallback onTap;
+
+  const _MapPreview({
+    required this.latitude,
+    required this.longitude,
+    required this.onTap,
+  });
+
+  static const String _mapboxAccessToken =
+      '';
+
+  @override
+  Widget build(BuildContext context) {
+    final lon = Uri.encodeComponent(longitude);
+    final lat = Uri.encodeComponent(latitude);
+    final String staticMapUrl =
+        'https://api.mapbox.com/styles/v1/mapbox/streets-v11/static/'
+        'pin-s($lon,$lat)/' // Using a standard small pin
+        '$lon,$lat,14,0/600x400?access_token=$_mapboxAccessToken';
+
+    return GestureDetector(
+      onTap: onTap,
+      child: AspectRatio(
+        aspectRatio: 16 / 10,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12.0),
+          child: Stack(
+            fit: StackFit.expand,
+            alignment: Alignment.center,
+            children: [
+              Image.network(
+                staticMapUrl,
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return Container(
+                    color: Colors.grey.shade800,
+                    child: const Center(
+                        child:
+                            CircularProgressIndicator(color: Colors.white70)),
+                  );
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  // This will help you see the exact error in your debug console.
+                  print('--- MAP PREVIEW FAILED TO LOAD ---');
+                  print('Error: $error');
+                  print('URL: $staticMapUrl');
+                  print('---------------------------------');
+
+                  return Container(
+                    color: Colors.grey.shade800,
+                    child: const Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.map_outlined,
+                            color: Colors.white60, size: 48),
+                        SizedBox(height: 8),
+                        Text('Could not load map preview',
+                            style: TextStyle(color: Colors.white60)),
+                      ],
+                    ),
+                  );
+                },
+              ),
+              // This overlay for tapping is unchanged and should work fine.
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.4),
+                ),
+                child: const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.fullscreen, color: Colors.white, size: 40),
+                      SizedBox(height: 8),
+                      Text(
+                        'Tap to view full map',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          shadows: [
+                            Shadow(blurRadius: 1, color: Colors.black87)
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
