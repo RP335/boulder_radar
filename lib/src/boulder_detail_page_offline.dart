@@ -30,6 +30,9 @@ class BoulderDetailPageOffline extends StatelessWidget {
   Widget build(BuildContext context) {
     // Extract data from boulderData
     final name = boulderData['name'] as String? ?? 'Unnamed Boulder';
+    final firstAscentUserName =
+        boulderData['first_ascent_user_name'] as String?;
+
     final grade = boulderData['grade'] as String? ?? '—';
     final description = boulderData['description'] as String? ?? '';
 
@@ -144,6 +147,33 @@ class BoulderDetailPageOffline extends StatelessWidget {
                   .headlineMedium
                   ?.copyWith(color: Colors.white, fontWeight: FontWeight.bold),
             ),
+            const SizedBox(height: 20),
+
+            if (firstAscentUserName != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: RichText(
+                  text: TextSpan(
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Colors.white.withOpacity(0.9),
+                        ),
+                    children: [
+                      TextSpan(
+                        text: 'FA: ',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber.shade600,
+                            fontSize: 18),
+                      ),
+                      TextSpan(
+                        text: firstAscentUserName,
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
             const SizedBox(height: 20),
 
             _buildSectionTitle(context, 'Description'),
@@ -295,7 +325,7 @@ class BoulderDetailPageOffline extends StatelessWidget {
 
 class _MapPreviewOffline extends StatelessWidget {
   final VoidCallback onTap;
-  final String? staticMapUrl; 
+  final String? staticMapUrl;
 
   const _MapPreviewOffline({required this.onTap, this.staticMapUrl});
 

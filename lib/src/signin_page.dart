@@ -1,9 +1,10 @@
+import 'dart:async'; // Import for StreamSubscription
+import 'package:flutter/foundation.dart'; // for kIsWeb
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'create_account_page.dart';
 import 'zones_page.dart';
-import 'package:flutter/foundation.dart'; // for kIsWeb
 
 class SignInPage extends StatefulWidget {
   const SignInPage({Key? key}) : super(key: key);
@@ -21,10 +22,29 @@ class _SignInPageState extends State<SignInPage> {
   String? _errorText;
   bool _obscurePassword = true;
 
+  // NEW: Add a listener for auth state changes
+  late final StreamSubscription<AuthState> _authStateSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _authStateSubscription = _supabase.auth.onAuthStateChange.listen((data) {
+      final session = data.session;
+      if (session != null && mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const ZonesPage()),
+          (route) => false,
+        );
+      }
+    });
+  }
+
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _authStateSubscription.cancel(); 
     super.dispose();
   }
 
@@ -38,26 +58,23 @@ class _SignInPageState extends State<SignInPage> {
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => const ZonesPage()),
-        );
-      }
+      // REMOVED: Navigation is now handled by the listener for all sign-in types
     } on AuthException catch (error) {
-      // NEW: Check for the specific "Email not confirmed" error
       if (error.message == 'Email not confirmed') {
         setState(() {
-          _errorText = 'Email not confirmed. Please check your inbox and click the verification link.';
+          _errorText =
+              'Email not confirmed. Please check your inbox and click the verification link.';
         });
       } else {
-        // Handle other auth errors like invalid credentials
         setState(() {
           _errorText = error.message;
         });
       }
     } catch (e) {
+
       setState(() {
-        _errorText = 'An unexpected error occurred.';
+        _errorText =
+            'Could not connect. Please check your internet connection and try again.';
       });
     } finally {
       if (mounted) {
@@ -69,33 +86,45 @@ class _SignInPageState extends State<SignInPage> {
   }
 
   Future<void> _signInWithGoogle() async {
-    setState(() { _isLoading = true; _errorText = null; });
+    setState(() {
+      _isLoading = true;
+      _errorText = null;
+    });
     try {
       await _supabase.auth.signInWithOAuth(
         OAuthProvider.google,
-        redirectTo: kIsWeb 
-        ? 'http://localhost:3000/auth/callback'
-        : 'com.boulderradar.app://login-callback/',
+        redirectTo: kIsWeb
+            ? 'http://localhost:3000/auth/callback'
+            : 'com.boulderradar.app://login-callback/',
       );
     } on AuthException catch (error) {
-      setState(() { _errorText = error.message; });
+      setState(() {
+        _errorText = error.message;
+      });
     } catch (e) {
-      setState(() { _errorText = 'An unexpected error occurred.'; });
+      // MODIFIED: Handle generic errors like network issues gracefully
+      setState(() {
+        _errorText =
+            'Could not connect. Please check your internet connection and try again.';
+      });
     } finally {
       if (mounted) {
-        setState(() { _isLoading = false; });
+        setState(() {
+          _isLoading = false;
+        });
       }
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
+
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -177,11 +206,16 @@ class _SignInPageState extends State<SignInPage> {
                 height: 50,
                 child: OutlinedButton.icon(
                   onPressed: _isLoading ? null : _signInWithGoogle,
-                  icon: Image.asset('assets/signin-assets/Android/png@3x/neutral/android_neutral_rd_na@3x.png', height: 20, width: 20),
-                  label: const Text('Continue with Google', style: TextStyle(color: Colors.white)),
+                  icon: Image.asset(
+                      'assets/signin-assets/Android/png@3x/neutral/android_neutral_rd_na@3x.png',
+                      height: 20,
+                      width: 20),
+                  label: const Text('Continue with Google',
+                      style: TextStyle(color: Colors.white)),
                   style: OutlinedButton.styleFrom(
                     side: BorderSide(color: Colors.grey.shade800),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
               ),

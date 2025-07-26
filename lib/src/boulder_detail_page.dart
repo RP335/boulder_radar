@@ -1,15 +1,19 @@
+import 'dart:io';
+
 import 'package:boulder_radar/src/full_screen_map_page.dart';
 import 'package:boulder_radar/widgets/boulder_location_map.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // Import shared_preferences
 import 'dart:convert'; // Required for jsonEncode and jsonDecode
 import 'dart:math';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 class BoulderDetailPage extends StatefulWidget {
   final String boulderId;
@@ -85,7 +89,6 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
       List<String> savedBoulders = prefs.getStringList('saved_boulders') ?? [];
       final dataToSave = Map<String, dynamic>.from(_boulderData!);
 
-
       final location = _boulderData!['location'] as Map<String, dynamic>?;
       final coords = location?['coordinates'] as List<dynamic>?;
 
@@ -104,12 +107,10 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
         await DefaultCacheManager().downloadFile(staticMapUrl);
       }
 
-
       savedBoulders
           .removeWhere((b) => (jsonDecode(b) as Map)['id'] == dataToSave['id']);
       savedBoulders.add(jsonEncode(dataToSave));
       await prefs.setStringList('saved_boulders', savedBoulders);
-
 
       final imagesList = _boulderData!['images'] as List<dynamic>?;
       if (imagesList != null && imagesList.isNotEmpty) {
@@ -233,6 +234,17 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
 
   Future<void> _fetchBoulderDetails() async {
     if (!mounted) return;
+
+    final connectivityResult = await (Connectivity().checkConnectivity());
+    if (connectivityResult.contains(ConnectivityResult.none)) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _error = "You're offline. Please check your internet connection.";
+      });
+      return; // Stop execution if offline
+    }
+
     setState(() {
       _isLoading = true;
       _error = null;
@@ -259,6 +271,20 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
         });
         print('Error fetching boulder: $errorMessage');
       }
+    } on SocketException {
+      if (!mounted) return;
+      setState(() {
+        _error = "A network error occurred. Please check your connection.";
+        _isLoading = false;
+      });
+    }
+    // Then catch other potential exceptions
+    on ClientException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = "An application error occurred: ${e.message}";
+        _isLoading = false;
+      });
     } catch (e) {
       if (!mounted) return;
       print('Exception fetching boulder: $e');
@@ -364,6 +390,9 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
     // Extract data from _boulderData
     final id = _boulderData!['id'] as String? ?? '';
     final name = _boulderData!['name'] as String? ?? 'Unnamed Boulder';
+    final firstAscentUserName =
+        _boulderData!['first_ascent_user_name'] as String?;
+
     final grade = _boulderData!['grade'] as String? ?? '—';
     final description = _boulderData!['description'] as String? ?? '';
     final uploadedBy = _boulderData!['uploaded_by'] as String?;
@@ -543,6 +572,33 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
 
             const SizedBox(height: 16),
 
+            if (firstAscentUserName != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8.0),
+                child: RichText(
+                  text: TextSpan(
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          color: Colors.white.withOpacity(0.9),
+                        ),
+                    children: [
+                      TextSpan(
+                        text: 'FA: ', // The prominent part
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber.shade600, // Hierarchical color
+                            fontSize: 18),
+                      ),
+                      TextSpan(
+                        text: firstAscentUserName, // The user's name
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 16),
+
             _buildSectionTitle('Description'),
             Text(
               description.isEmpty ? 'No description provided.' : description,
@@ -636,10 +692,30 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
             _buildSectionTitle('Location Map'),
             const SizedBox(height: 4),
             if (latitude != null && longitude != null)
+              // In boulder_detail_page.dart, inside the build method...
+
+// ...
               _MapPreview(
                 latitude: latitude,
                 longitude: longitude,
-                onTap: () {
+                onTap: () async {
+                  // Make the callback async
+                  // 💡 Proactive Check before navigating
+                  final connectivityResult =
+                      await (Connectivity().checkConnectivity());
+                  if (connectivityResult.contains(ConnectivityResult.none)) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                              "You're offline. Map requires an internet connection."),
+                          backgroundColor: Colors.orange,
+                        ),
+                      );
+                    }
+                    return; // Don't navigate
+                  }
+
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => FullScreenMapPage(
@@ -650,6 +726,7 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
                   );
                 },
               )
+// ...
             else
               Container(
                 height: 150,

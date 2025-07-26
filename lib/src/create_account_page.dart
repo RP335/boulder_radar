@@ -1,9 +1,10 @@
+import 'dart:async'; // Import for StreamSubscription
+import 'package:flutter/foundation.dart'; // for kIsWeb
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'signin_page.dart';
-import 'zones_page.dart'; 
-import 'package:flutter/foundation.dart'; // for kIsWeb
+import 'zones_page.dart';
 
 class CreateAccountPage extends StatefulWidget {
   const CreateAccountPage({Key? key}) : super(key: key);
@@ -23,12 +24,31 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
   String? _errorText;
   bool _obscurePassword = true;
 
+  // NEW: Add a listener for auth state changes
+  late final StreamSubscription<AuthState> _authStateSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    // NEW: Listen for successful sign-in to navigate
+    _authStateSubscription = _supabase.auth.onAuthStateChange.listen((data) {
+      final session = data.session;
+      if (session != null && mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const ZonesPage()),
+          (route) => false,
+        );
+      }
+    });
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
+    _authStateSubscription.cancel(); // NEW: Cancel the subscription
     super.dispose();
   }
 
@@ -47,13 +67,11 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
 
     try {
       await _supabase.auth.signUp(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
-        data: {'full_name': _nameController.text.trim()},
-        emailRedirectTo: 'com.boulderradar.app://login-callback/'
-      );
+          email: _emailController.text.trim(),
+          password: _passwordController.text.trim(),
+          data: {'full_name': _nameController.text.trim()},
+          emailRedirectTo: 'com.boulderradar.app://login-callback/');
 
-      // Show success message and navigate to the sign-in page.
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -62,7 +80,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
               style: TextStyle(color: Colors.white),
             ),
             backgroundColor: Colors.green,
-            duration: Duration(seconds: 5), // Keep the message visible a bit longer
+            duration: Duration(seconds: 5),
           ),
         );
         Navigator.of(context).pushReplacement(
@@ -74,8 +92,10 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
         _errorText = error.message;
       });
     } catch (e) {
+      // MODIFIED: Handle generic errors like network issues gracefully
       setState(() {
-        _errorText = 'An unexpected error occurred.';
+        _errorText =
+            'Could not connect. Please check your internet connection and try again.';
       });
     } finally {
       if (mounted) {
@@ -103,8 +123,10 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
         _errorText = error.message;
       });
     } catch (e) {
+      // MODIFIED: Handle generic errors like network issues gracefully
       setState(() {
-        _errorText = 'An unexpected error occurred.';
+        _errorText =
+            'Could not connect. Please check your internet connection and try again.';
       });
     } finally {
       if (mounted) {
@@ -117,6 +139,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
 
   @override
   Widget build(BuildContext context) {
+    // The rest of the build method remains the same...
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
       body: SafeArea(

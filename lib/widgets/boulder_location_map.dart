@@ -1,6 +1,7 @@
 // lib/widgets/boulder_location_map.dart
 
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -26,7 +27,8 @@ class BoulderLocationMap extends StatefulWidget {
 }
 
 class _BoulderLocationMapState extends State<BoulderLocationMap> {
-  static final String _mapboxAccessToken = dotenv.get('MAPBOX_ACCESS_TOKEN' as Uri) as String;
+  static final String _mapboxAccessToken =
+      dotenv.get('MAPBOX_ACCESS_TOKEN' as Uri) as String;
 
   mapbox.MapboxMap? _mapboxMap;
   mapbox.PointAnnotationManager? _pointAnnotationManager;
@@ -259,6 +261,15 @@ class _BoulderLocationMapState extends State<BoulderLocationMap> {
         _isRouteLoaded = true;
       } else {
         throw Exception('Failed to load route: ${response.statusCode}');
+      }
+    } on SocketException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Offline: Could not fetch walking directions."),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

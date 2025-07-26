@@ -27,13 +27,14 @@ class PendingUploadAdapter extends TypeAdapter<PendingUpload> {
       imageBytes: fields[7] as Uint8List?,
       imageFileExtension: fields[8] as String?,
       drawingData: (fields[9] as Map?)?.cast<String, dynamic>(),
+      firstAscentUserId: fields[10] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, PendingUpload obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(11)
       ..writeByte(0)
       ..write(obj.boulderName)
       ..writeByte(1)
@@ -53,7 +54,9 @@ class PendingUploadAdapter extends TypeAdapter<PendingUpload> {
       ..writeByte(8)
       ..write(obj.imageFileExtension)
       ..writeByte(9)
-      ..write(obj.drawingData);
+      ..write(obj.drawingData)
+      ..writeByte(10)
+      ..write(obj.firstAscentUserId);
   }
 
   @override

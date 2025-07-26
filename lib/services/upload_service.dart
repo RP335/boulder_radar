@@ -6,7 +6,6 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:hive/hive.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-
 part 'upload_service.g.dart';
 
 @HiveType(typeId: 0)
@@ -31,6 +30,8 @@ class PendingUpload extends HiveObject {
   final String? imageFileExtension;
   @HiveField(9)
   final Map<String, dynamic>? drawingData;
+  @HiveField(10)
+  final String? firstAscentUserId;
 
   PendingUpload({
     required this.boulderName,
@@ -43,9 +44,9 @@ class PendingUpload extends HiveObject {
     this.imageBytes,
     this.imageFileExtension,
     this.drawingData,
+    this.firstAscentUserId,
   });
 }
-
 
 class UploadService {
   UploadService._privateConstructor();
@@ -60,7 +61,6 @@ class UploadService {
 
     _connectivitySubscription =
         Connectivity().onConnectivityChanged.listen(_handleConnectivityChange);
-
     _processQueue();
   }
 
@@ -68,19 +68,20 @@ class UploadService {
     await _queueBox.add(upload);
   }
 
-  void _handleConnectivityChange(ConnectivityResult result) {
-    if (result == ConnectivityResult.mobile ||
-        result == ConnectivityResult.wifi) {
+  void _handleConnectivityChange(List<ConnectivityResult> result) {
+    if (result.contains(ConnectivityResult.mobile) ||
+        result.contains(ConnectivityResult.wifi)) {
       print("Connection restored! Processing upload queue...");
       _processQueue();
     }
   }
 
+
   Future<void> _processQueue() async {
     if (_queueBox.isEmpty) return;
 
     final connectivityResult = await (Connectivity().checkConnectivity());
-    if (connectivityResult == ConnectivityResult.none) return;
+    if (connectivityResult.contains(ConnectivityResult.none)) return;
 
     print("Processing ${_queueBox.length} items in the queue.");
     final List<int> keys = _queueBox.keys.cast<int>().toList();
@@ -90,7 +91,7 @@ class UploadService {
       try {
         final success = await performUpload(upload);
         if (success) {
-          await upload.delete();
+          await _queueBox.delete(key);
         }
       } catch (e) {
         print("Failed to upload queued item. Will retry later. Error: $e");
@@ -103,7 +104,7 @@ class UploadService {
     if (userId == null)
       throw Exception('User not authenticated for queued upload.');
 
-    final boulderPayload = {
+     final boulderPayload = {
       'name': data.boulderName,
       'area_id': data.areaId,
       'uploaded_by': userId,
@@ -111,6 +112,7 @@ class UploadService {
       'longitude': data.longitude,
       'grade': data.grade,
       'description': data.boulderDescription,
+      'first_ascent_user_id': data.firstAscentUserId, 
     };
     final boulderResponse =
         await _supabase.functions.invoke('add-boulder', body: boulderPayload);

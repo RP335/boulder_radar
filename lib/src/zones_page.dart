@@ -16,7 +16,6 @@ class ZonesPage extends StatefulWidget {
 class _ZonesPageState extends State<ZonesPage> {
   final SupabaseClient _supabase = Supabase.instance.client;
   late Future<List<Map<String, dynamic>>> _zonesFuture;
-  bool _isOffline = false;
 
   @override
   void initState() {
@@ -30,18 +29,12 @@ class _ZonesPageState extends State<ZonesPage> {
           await _supabase.from('zones').select();
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('cached_zones', jsonEncode(data));
-      if (mounted) {
-        setState(() => _isOffline = false);
-      }
       return data;
     } catch (e) {
       print('Failed to fetch zones from network, trying cache. Error: $e');
       final prefs = await SharedPreferences.getInstance();
       final cachedData = prefs.getString('cached_zones');
       if (cachedData != null) {
-        if (mounted) {
-          setState(() => _isOffline = true);
-        }
         return jsonDecode(cachedData).cast<Map<String, dynamic>>();
       } else {
         throw Exception('An unexpected error occurred: $e');
@@ -58,12 +51,7 @@ class _ZonesPageState extends State<ZonesPage> {
   Future<void> _signOut() async {
     try {
       await Supabase.instance.client.auth.signOut();
-      if (mounted) {
-        Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (context) => const CreateAccountPage()),
-          (route) => false,
-        );
-      }
+      // The AuthHandler in main.dart will automatically navigate to the login page.
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -96,154 +84,137 @@ class _ZonesPageState extends State<ZonesPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_isOffline)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8.0),
-              color: Colors.orange.shade800,
-              child: const Text(
-                "You're offline. Showing cached zones.",
-                textAlign: TextAlign.center,
-                style:
-                    TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+      // FIXED: Removed the incorrect 'Expanded' widget. The FutureBuilder is now the direct body.
+      body: FutureBuilder<List<Map<String, dynamic>>>(
+        future: _zonesFuture,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  'Error loading zones:\nFailed to connect. Pull down to try again.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red),
+                ),
               ),
-            ),
-          Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _zonesFuture,
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Text(
-                        'Error loading zones:\nFailed to connect. Pull down to try again.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(color: Colors.red),
-                      ),
-                    ),
-                  );
-                }
-                final zones = snapshot.data;
-                if (zones == null || zones.isEmpty) {
-                  return const Center(
-                    child: Text(
-                      'No zones found.',
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                  );
-                }
-                return RefreshIndicator(
-                  onRefresh: _handleRefresh,
-                  color: Colors.white,
-                  backgroundColor: Colors.grey.shade800,
-                  child: SingleChildScrollView(
-                    physics: const AlwaysScrollableScrollPhysics(),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        const SizedBox(height: 20),
+            );
+          }
+          final zones = snapshot.data;
+          if (zones == null || zones.isEmpty) {
+            return const Center(
+              child: Text(
+                'No zones found.',
+                style: TextStyle(color: Colors.white70),
+              ),
+            );
+          }
+          return RefreshIndicator(
+            onRefresh: _handleRefresh,
+            color: Colors.white,
+            backgroundColor: Colors.grey.shade800,
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const SizedBox(height: 20),
 
-                        Image.asset(
-                          'assets/images/boulderly_image.png', // <-- New image path
-                          height: 200, // You can adjust this height if needed
-                        ),
-                        const SizedBox(height: 24),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                          child: Column(
-                            children: [
-                              const Text(
-                                'Chalk up, folks!',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 26,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Where are we climbing today?',
-                                style: TextStyle(
-                                  color: Colors.grey.shade400,
-                                  fontSize: 16,
-                                ),
-                              ),
-                              const SizedBox(height: 32),
-                              GridView.builder(
-                                itemCount: zones.length,
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                gridDelegate:
-                                    const SliverGridDelegateWithFixedCrossAxisCount(
-                                  crossAxisCount: 2,
-                                  mainAxisSpacing: 16,
-                                  crossAxisSpacing: 16,
-                                  childAspectRatio: 1.1,
-                                ),
-                                itemBuilder: (context, index) {
-                                  final zone = zones[index];
-                                  final zoneId = zone['id'] as String;
-                                  final zoneName =
-                                      zone['name'] as String? ?? 'Unnamed Zone';
-                                  return GestureDetector(
-                                    onTap: () {
-                                      Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => ZoneAreasListPage(
-                                            zoneId: zoneId,
-                                            zoneName: zoneName,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                    child: Container(
-                                      decoration: BoxDecoration(
-                                        color: Colors.grey.shade800,
-                                        borderRadius: BorderRadius.circular(12),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: Colors.black.withOpacity(0.2),
-                                            blurRadius: 4,
-                                            offset: const Offset(2, 2),
-                                          )
-                                        ],
-                                      ),
-                                      child: Center(
-                                        child: Padding(
-                                          padding: const EdgeInsets.all(8.0),
-                                          child: Text(
-                                            zoneName,
-                                            style: const TextStyle(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.w600,
-                                              color: Colors.white,
-                                            ),
-                                            textAlign: TextAlign.center,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ],
+                  Image.asset(
+                    'assets/images/boulderly_image.png',
+                    height: 200,
+                  ),
+                  const SizedBox(height: 24),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'Chalk up, folks!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 26,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Where are we climbing today?',
+                          style: TextStyle(
+                            color: Colors.grey.shade400,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                        GridView.builder(
+                          itemCount: zones.length,
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            mainAxisSpacing: 16,
+                            crossAxisSpacing: 16,
+                            childAspectRatio: 1.1,
+                          ),
+                          itemBuilder: (context, index) {
+                            final zone = zones[index];
+                            final zoneId = zone['id'] as String;
+                            final zoneName =
+                                zone['name'] as String? ?? 'Unnamed Zone';
+                            return GestureDetector(
+                              onTap: () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => ZoneAreasListPage(
+                                      zoneId: zoneId,
+                                      zoneName: zoneName,
+                                    ),
+                                  ),
+                                );
+                              },
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade800,
+                                  borderRadius: BorderRadius.circular(12),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 4,
+                                      offset: const Offset(2, 2),
+                                    )
+                                  ],
+                                ),
+                                child: Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: Text(
+                                      zoneName,
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ],
                     ),
                   ),
-                );
-              },
+                  const SizedBox(height: 20),
+                ],
+              ),
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
