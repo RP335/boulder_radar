@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:boulder_radar/src/edit_boulder_page.dart';
 import 'package:boulder_radar/src/full_screen_map_page.dart';
 import 'package:boulder_radar/widgets/boulder_location_map.dart';
 import 'package:flutter/material.dart';
@@ -443,6 +444,24 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
             Colors.grey.shade800, // Slightly different shade for AppBar
         elevation: 1,
         actions: [
+          if (canDelete) // Use the same condition for edit and delete
+            IconButton(
+              tooltip: "Edit Boulder",
+              icon: const Icon(Icons.edit_outlined, color: Colors.white),
+              onPressed: () async {
+                if (_boulderData != null) {
+                  final result = await Navigator.of(context).push<bool>(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          EditBoulderPage(initialData: _boulderData!),
+                    ),
+                  );
+                  if (result == true) {
+                    _fetchBoulderDetails();
+                  }
+                }
+              },
+            ),
           if (canDelete) // Conditionally show the delete button
             IconButton(
               tooltip: "Delete Boulder",

@@ -6,9 +6,10 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart' as geo;
-import 'package:http/http.dart' as dotenv;
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mapbox;
 import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 
 class BoulderLocationMap extends StatefulWidget {
   final double boulderLatitude;
@@ -27,8 +28,8 @@ class BoulderLocationMap extends StatefulWidget {
 }
 
 class _BoulderLocationMapState extends State<BoulderLocationMap> {
-  static final String _mapboxAccessToken =
-      dotenv.get('MAPBOX_ACCESS_TOKEN' as Uri) as String;
+  static final _mapboxAccessToken = dotenv.get('MAPBOX_ACCESS_TOKEN');
+
 
   mapbox.MapboxMap? _mapboxMap;
   mapbox.PointAnnotationManager? _pointAnnotationManager;

@@ -161,7 +161,6 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
         : _fontScaleSortMap[gradeUpper] ?? 999;
   }
 
-  // --- RENAMED AND UPDATED TO CALL THE NEW EDGE FUNCTION ---
   Future<List<Map<String, dynamic>>> _fetchBouldersInArea(String areaId) async {
     try {
       LocationPermission permission = await Geolocator.checkPermission();
@@ -172,15 +171,17 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
           permission == LocationPermission.deniedForever) {
         throw Exception('Location permissions are denied.');
       }
-      final Position pos = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.high)
-          .timeout(const Duration(seconds: 10));
 
-      // CALLS THE NEW EDGE FUNCTION
+      Position? pos = await Geolocator.getLastKnownPosition();
+
+      pos ??= await Geolocator.getCurrentPosition(
+              desiredAccuracy: LocationAccuracy.medium)
+          .timeout(const Duration(seconds: 8));
+
       final FunctionResponse funcResponse = await _supabase.functions.invoke(
-        'get-boulders-in-area', // <-- THE NEW EDGE FUNCTION
+        'get-boulders-in-area',
         body: {
-          'p_area_id': areaId, // <-- PASSING areaId
+          'p_area_id': areaId,
           'user_lat': pos.latitude,
           'user_lng': pos.longitude,
         },
@@ -191,7 +192,6 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
       }
       if (funcResponse.data == null) return [];
 
-      // The RPC now returns the correct data directly, no client-side filter needed.
       return List<Map<String, dynamic>>.from(funcResponse.data);
     } on TimeoutException {
       throw Exception('The operation timed out. Please try again.');
@@ -257,7 +257,7 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
                   flex: 2,
                   child: SegmentedButton<BoulderSortOrder>(
                       style: _segmentedButtonStyle(),
-                      showSelectedIcon: false, 
+                      showSelectedIcon: false,
                       segments: const [
                         ButtonSegment(
                             value: BoulderSortOrder.distance,
@@ -347,14 +347,14 @@ class _AreaBoulderListPageState extends State<AreaBoulderListPage> {
     );
   }
 
-ButtonStyle _segmentedButtonStyle() => SegmentedButton.styleFrom(
-    backgroundColor: Colors.grey.shade800,
-    foregroundColor: Colors.white70,
-    selectedForegroundColor: Colors.white,
-    selectedBackgroundColor: Colors.deepPurple,
-    side: BorderSide(color: Colors.grey.shade700),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-);
+  ButtonStyle _segmentedButtonStyle() => SegmentedButton.styleFrom(
+        backgroundColor: Colors.grey.shade800,
+        foregroundColor: Colors.white70,
+        selectedForegroundColor: Colors.white,
+        selectedBackgroundColor: Colors.deepPurple,
+        side: BorderSide(color: Colors.grey.shade700),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      );
 
   Widget _buildEmptyState(String message) => Center(
       child: Padding(

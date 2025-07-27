@@ -1,4 +1,4 @@
-import 'package:boulder_radar/src/create_account_page.dart';
+import 'package:boulder_radar/src/signin_page.dart';
 import 'package:boulder_radar/src/zones_areas_list_page.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -41,7 +41,7 @@ class _ZonesPageState extends State<ZonesPage> {
       }
     }
   }
-    
+
   Future<void> _handleRefresh() async {
     setState(() {
       _zonesFuture = _fetchZones();
@@ -51,7 +51,14 @@ class _ZonesPageState extends State<ZonesPage> {
   Future<void> _signOut() async {
     try {
       await Supabase.instance.client.auth.signOut();
-      // The AuthHandler in main.dart will automatically navigate to the login page.
+
+      if (mounted) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const SignInPage()),
+          (route) =>
+              false, 
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -122,7 +129,6 @@ class _ZonesPageState extends State<ZonesPage> {
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   const SizedBox(height: 20),
-
                   Image.asset(
                     'assets/images/boulderly_image.png',
                     height: 200,

@@ -1,10 +1,11 @@
 import 'dart:io';
 import 'dart:ui' as ui;
-
+import 'package:image/image.dart' as img;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:flutter/services.dart';
 
 // Represents a single continuous line drawn by the user. Unchanged.
 class DrawnLine {
@@ -137,14 +138,13 @@ class _DrawingPageState extends State<DrawingPage> {
     });
   }
 
-
   Future<void> _saveAndReturnDrawing() async {
     if (_backgroundImage == null) {
       Navigator.of(context).pop();
       return;
     }
 
-
+    // 1. Record the drawing on a canvas
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(
       recorder,
@@ -152,9 +152,8 @@ class _DrawingPageState extends State<DrawingPage> {
           _backgroundImage!.height.toDouble()),
     );
 
-
+    // Draw the original image and then the lines on top
     canvas.drawImage(_backgroundImage!, Offset.zero, Paint());
-
     for (final line in _lines) {
       final paint = Paint()
         ..color = line.color
@@ -172,33 +171,43 @@ class _DrawingPageState extends State<DrawingPage> {
       }
     }
 
-
-    final ui.Image finalImage = await recorder.endRecording().toImage(
+    // 2. Convert the canvas drawing to raw pixel data
+    final ui.Image finalUiImage = await recorder.endRecording().toImage(
           _backgroundImage!.width,
           _backgroundImage!.height,
         );
+    final ByteData? byteData =
+        await finalUiImage.toByteData(format: ui.ImageByteFormat.rawRgba);
 
+    if (byteData == null || !mounted) return;
 
-    final byteData =
-        await finalImage.toByteData(format: ui.ImageByteFormat.png);
-    if (byteData == null) return;
-    final Uint8List pngBytes = byteData.buffer.asUint8List();
+    final img.Image image = img.Image.fromBytes(
+      width: _backgroundImage!.width,
+      height: _backgroundImage!.height,
+      bytes: byteData.buffer,
+      format:
+          img.Format.uint8, // CORRECT: Use uint8 for standard 8-bit channels
+    );
 
+    final Uint8List updatedImageBytes =
+        Uint8List.fromList(img.encodeJpg(image, quality: 75));
     final Map<String, dynamic> result = {
-      'updatedImageBytes': pngBytes,
       'has_drawings': _lines.isNotEmpty,
-      'drawing_data': null, // Placeholder for future use
     };
 
-    if (!mounted) return;
+    // 5. Handle returning the data based on the platform (Web vs. Mobile)
     if (kIsWeb) {
-      Navigator.of(context).pop(result..addAll({'updatedImagePath': null}));
+      // For web, we pass the bytes directly.
+      result['updatedImageBytes'] = updatedImageBytes;
+      Navigator.of(context).pop(result);
     } else {
+      // For mobile, we write to a temporary file and pass the path.
       final tempDir = await getTemporaryDirectory();
       final tempPath =
-          '${tempDir.path}/drawn_${DateTime.now().millisecondsSinceEpoch}.png';
-      await File(tempPath).writeAsBytes(pngBytes);
-      Navigator.of(context).pop(result..addAll({'updatedImagePath': tempPath}));
+          '${tempDir.path}/drawn_${DateTime.now().millisecondsSinceEpoch}.jpg'; // Save as .jpg
+      await File(tempPath).writeAsBytes(updatedImageBytes);
+      result['updatedImagePath'] = tempPath;
+      Navigator.of(context).pop(result);
     }
   }
 
@@ -327,7 +336,6 @@ class _DrawingPageState extends State<DrawingPage> {
     );
   }
 
-
   Widget _buildColorButton(Color color) {
     bool isSelected = _selectedColor == color;
     return GestureDetector(
@@ -360,7 +368,6 @@ class DrawingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-
     canvas.drawImage(backgroundImage, Offset.zero, Paint());
 
     // 2. Draw all the previously completed lines.

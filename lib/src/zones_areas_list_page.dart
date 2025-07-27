@@ -43,8 +43,8 @@ class _ZoneAreasListPageState extends State<ZoneAreasListPage> {
         throw Exception('Location permissions are denied.');
       }
       final Position pos = await Geolocator.getCurrentPosition(
-              desiredAccuracy: LocationAccuracy.high)
-          .timeout(const Duration(seconds: 10));
+              desiredAccuracy: LocationAccuracy.low)
+          .timeout(const Duration(seconds: 15));
 
       final response = await _supabase.rpc(
         'get_areas_in_zone_by_proximity',
