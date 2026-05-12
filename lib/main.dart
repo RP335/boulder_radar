@@ -8,6 +8,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'src/create_account_page.dart'; 
 import 'src/zones_page.dart';
 import 'services/upload_service.dart'; 
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart';
 
@@ -35,8 +37,9 @@ Future<void> main() async {
     UploadService.instance.init();
 
 
-    MapboxOptions.setAccessToken(mapboxAccessToken);
-
+    if (!kIsWeb) {
+      MapboxOptions.setAccessToken(mapboxAccessToken);
+    }
 
     runApp(const MyApp());
   } catch (e, stack) {

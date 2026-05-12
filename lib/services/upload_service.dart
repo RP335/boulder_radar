@@ -55,6 +55,7 @@ class UploadService {
   final SupabaseClient _supabase = Supabase.instance.client;
   late final Box<PendingUpload> _queueBox;
   StreamSubscription? _connectivitySubscription;
+  bool _isProcessing = false;
 
   void init() {
     _queueBox = Hive.box<PendingUpload>('upload_queue');
@@ -78,24 +79,32 @@ class UploadService {
 
 
   Future<void> _processQueue() async {
+    // Prevent re-entry: connectivity events + the init() call can otherwise
+    // run two passes in parallel and create duplicate boulders.
+    if (_isProcessing) return;
     if (_queueBox.isEmpty) return;
 
     final connectivityResult = await (Connectivity().checkConnectivity());
     if (connectivityResult.contains(ConnectivityResult.none)) return;
 
-    print("Processing ${_queueBox.length} items in the queue.");
-    final List<int> keys = _queueBox.keys.cast<int>().toList();
-    for (final key in keys) {
-      final upload = _queueBox.get(key);
-      if (upload == null) continue;
-      try {
-        final success = await performUpload(upload);
-        if (success) {
-          await _queueBox.delete(key);
+    _isProcessing = true;
+    try {
+      print("Processing ${_queueBox.length} items in the queue.");
+      final List<int> keys = _queueBox.keys.cast<int>().toList();
+      for (final key in keys) {
+        final upload = _queueBox.get(key);
+        if (upload == null) continue;
+        try {
+          final success = await performUpload(upload);
+          if (success) {
+            await upload.delete();
+          }
+        } catch (e) {
+          print("Failed to upload queued item. Will retry later. Error: $e");
         }
-      } catch (e) {
-        print("Failed to upload queued item. Will retry later. Error: $e");
       }
+    } finally {
+      _isProcessing = false;
     }
   }
 
@@ -122,32 +131,59 @@ class UploadService {
     }
     final newBoulderId = boulderResponse.data['id'];
 
+    // Boulder is now committed in the DB. The remaining calls (landmark, image)
+    // must be awaited so they actually complete before the queue item is
+    // deleted, but we deliberately swallow their errors: if we threw here the
+    // queue would retry the whole item and `create_boulder_entry` would
+    // insert a second boulder (it has no idempotency key).
+
     if (data.landmarkDescription.isNotEmpty) {
-      _supabase.functions.invoke('add-landmark', body: {
-        'boulder_id': newBoulderId,
-        'description': data.landmarkDescription
-      });
+      try {
+        final landmarkResponse = await _supabase.functions.invoke(
+          'add-landmark',
+          body: {
+            'boulder_id': newBoulderId,
+            'description': data.landmarkDescription,
+          },
+        );
+        if (landmarkResponse.status != 201) {
+          print('add-landmark non-2xx: ${landmarkResponse.data}');
+        }
+      } catch (e) {
+        print('add-landmark failed for boulder $newBoulderId: $e');
+      }
     }
 
     if (data.imageBytes != null && data.imageFileExtension != null) {
-      final uniqueFileName =
-          '${newBoulderId}_${DateTime.now().millisecondsSinceEpoch}.${data.imageFileExtension}';
-      final storagePath = 'public/boulders/$newBoulderId/$uniqueFileName';
-      await _supabase.storage.from('boulder.radar.public.data').uploadBinary(
-            storagePath,
-            data.imageBytes!,
-            fileOptions: FileOptions(
-                contentType: 'image/${data.imageFileExtension}', upsert: false),
-          );
-      final publicImageUrl = _supabase.storage
-          .from('boulder.radar.public.data')
-          .getPublicUrl(storagePath);
-      _supabase.functions.invoke('add-image', body: {
-        'boulder_id': newBoulderId,
-        'image_path': publicImageUrl,
-        'has_drawings': data.drawingData?['has_drawings'] ?? false,
-        'drawing_data': data.drawingData?['drawing_data'],
-      });
+      try {
+        final uniqueFileName =
+            '${newBoulderId}_${DateTime.now().millisecondsSinceEpoch}.${data.imageFileExtension}';
+        final storagePath = 'public/boulders/$newBoulderId/$uniqueFileName';
+        await _supabase.storage.from('boulder.radar.public.data').uploadBinary(
+              storagePath,
+              data.imageBytes!,
+              fileOptions: FileOptions(
+                  contentType: 'image/${data.imageFileExtension}',
+                  upsert: false),
+            );
+        final publicImageUrl = _supabase.storage
+            .from('boulder.radar.public.data')
+            .getPublicUrl(storagePath);
+        final imageResponse = await _supabase.functions.invoke(
+          'add-image',
+          body: {
+            'boulder_id': newBoulderId,
+            'image_path': publicImageUrl,
+            'has_drawings': data.drawingData?['has_drawings'] ?? false,
+            'drawing_data': data.drawingData?['drawing_data'],
+          },
+        );
+        if (imageResponse.status != 201) {
+          print('add-image non-2xx: ${imageResponse.data}');
+        }
+      } catch (e) {
+        print('Image upload/registration failed for boulder $newBoulderId: $e');
+      }
     }
     return true;
   }

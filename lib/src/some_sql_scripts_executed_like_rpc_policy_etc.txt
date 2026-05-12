@@ -1,0 +1,122 @@
+-- Allow authenticated users to upload images
+CREATE POLICY "Enable insert for authenticated users only" 
+ON public.images 
+FOR INSERT 
+TO authenticated 
+WITH CHECK (true);
+
+-- Allow authenticated users to add landmarks
+CREATE POLICY "Enable insert for authenticated users only" 
+ON public.landmarks 
+FOR INSERT 
+TO authenticated 
+WITH CHECK (true);
+
+
+-- 1. RPC to create a boulder with coordinates
+create or replace function create_boulder_entry(
+  p_name text,
+  p_area_id uuid,
+  p_uploaded_by uuid,
+  p_lat float,
+  p_lng float,
+  p_grade text,
+  p_description text
+)
+returns jsonb
+language plpgsql
+as $$
+declare
+  new_id uuid;
+begin
+  insert into public.boulders (
+    name, 
+    area_id, 
+    uploaded_by, 
+    location, -- Converts Lat/Lng to PostGIS Geography
+    grade, 
+    description
+  )
+  values (
+    p_name, 
+    p_area_id, 
+    p_uploaded_by, 
+    ST_SetSRID(ST_MakePoint(p_lng, p_lat), 4326)::geography, 
+    p_grade, 
+    p_description
+  )
+  returning id into new_id;
+
+  return jsonb_build_object('id', new_id);
+end;
+$$;
+
+-- Run this in SQL Editor
+create or replace function fetch_boulders_with_distance(p_area_id uuid, user_lat float, user_lng float)
+returns table (
+  id uuid,
+  name text,
+  grade text,
+  description text,
+  distance_m float
+)
+language plpgsql
+as $$
+declare 
+  user_location geography;
+begin
+  -- Create a point from the user's lat/long
+  user_location := ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::geography;
+
+  return query
+  select 
+    b.id,
+    b.name,
+    b.grade,
+    b.description,
+    -- Calculate distance in meters
+    ST_Distance(b.location, user_location) as distance_m
+  from public.boulders b
+  where b.area_id = p_area_id
+  order by ST_Distance(b.location, user_location) asc;
+end;
+$$;
+
+create or replace function get_areas_in_zone_by_proximity(p_zone_id uuid, user_lat float, user_lng float)
+returns table (id uuid, name text, distance_m float)
+language plpgsql
+as $$
+declare 
+  user_loc geography;
+begin
+  -- Create a point for the user's location
+  user_loc := ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::geography;
+
+  return query
+  select 
+    a.id, 
+    a.name, 
+    -- FIX: Use 'a.location' instead of 'a.location_summary'
+    ST_Distance(a.location, user_loc) as distance_m
+  from areas a
+  where a.zone_id = p_zone_id
+  order by distance_m asc;
+end;
+$$;
+
+
+create or replace function get_boulders_with_distance(p_area_id uuid, user_lat float, user_lng float)
+returns table (id uuid, name text, grade text, distance_m float, location geography)
+language plpgsql
+as $$
+declare 
+  user_loc geography;
+begin
+  user_loc := ST_SetSRID(ST_MakePoint(user_lng, user_lat), 4326)::geography;
+  return query
+  select b.id, b.name, b.grade, ST_Distance(b.location, user_loc) as distance_m, b.location
+  from boulders b
+  where b.area_id = p_area_id
+  order by distance_m asc;
+end;
+$$;

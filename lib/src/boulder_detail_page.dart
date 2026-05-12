@@ -255,7 +255,7 @@ class _BoulderDetailPageState extends State<BoulderDetailPage> {
         'get-boulder-details',
         body: {'bid': widget.boulderId},
       );
-
+ 
       if (!mounted) return;
 
       if (response.status == 200 && response.data != null) {
